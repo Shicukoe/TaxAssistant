@@ -1,8 +1,7 @@
-"""Migration runner: chạy các file .sql theo thứ tự tên, mỗi file đúng một lần.
+"""Dựng database: tạo database nếu chưa có, rồi chạy các file .sql trong migrations/
+theo thứ tự tên, mỗi file đúng một lần.
 
-ponytail: không dùng Alembic. Migration của project này là forward-only và do một
-người viết — một bảng schema_migrations cộng vòng lặp này là đủ. Dùng Alembic khi
-nào cần autogenerate từ ORM hoặc cần downgrade thật.
+Chạy:  python -m app.db.setup_database
 """
 
 import sys
@@ -16,9 +15,10 @@ from app import config
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
-def ensure_database() -> bool:
-    """Tạo PGDATABASE nếu chưa có. Trả về True nếu vừa tạo mới."""
-    with psycopg.connect(config.ADMIN_DSN, autocommit=True) as conn:
+def create_database_if_missing() -> bool:
+    """Tạo database của app nếu chưa có. Trả về True nếu vừa tạo mới."""
+    config.require_env("PGPASSWORD")
+    with psycopg.connect(config.ADMIN_DATABASE_CONNECTION, autocommit=True) as conn:
         exists = conn.execute(
             "select 1 from pg_database where datname = %s", (config.PGDATABASE,)
         ).fetchone()
@@ -31,7 +31,8 @@ def ensure_database() -> bool:
         return True
 
 
-def applied_migrations(conn: psycopg.Connection) -> set[str]:
+def list_applied_migrations(conn: psycopg.Connection) -> set[str]:
+    """Tên các file migration đã chạy (bảng schema_migrations tự tạo nếu chưa có)."""
     conn.execute(
         """
         create table if not exists schema_migrations (
@@ -43,19 +44,18 @@ def applied_migrations(conn: psycopg.Connection) -> set[str]:
     return {r[0] for r in conn.execute("select filename from schema_migrations")}
 
 
-def migrate() -> list[str]:
+def apply_migrations() -> list[str]:
     """Chạy các migration chưa áp dụng. Trả về danh sách file vừa chạy."""
-    created = ensure_database()
-    if created:
+    if create_database_if_missing():
         print(f"đã tạo database {config.PGDATABASE}")
 
-    ran: list[str] = []
-    with psycopg.connect(config.DSN) as conn:
-        done = applied_migrations(conn)
+    applied_now: list[str] = []
+    with psycopg.connect(config.DATABASE_CONNECTION) as conn:
+        already_applied = list_applied_migrations(conn)
         conn.commit()
 
         for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
-            if path.name in done:
+            if path.name in already_applied:
                 continue
             print(f"áp dụng {path.name} ...", end=" ", flush=True)
             # Mỗi migration trong một transaction: lỗi giữa đường không để lại schema nửa vời.
@@ -65,16 +65,16 @@ def migrate() -> list[str]:
                     "insert into schema_migrations (filename) values (%s)", (path.name,)
                 )
             print("xong")
-            ran.append(path.name)
+            applied_now.append(path.name)
 
-    if not ran:
+    if not applied_now:
         print("không có migration mới")
-    return ran
+    return applied_now
 
 
 if __name__ == "__main__":
     try:
-        migrate()
+        apply_migrations()
     except psycopg.errors.FeatureNotSupported as e:
         # Nhánh đã lường trước: pgvector thường thiếu trên PG Windows.
         print(f"\nLỖI: {e}", file=sys.stderr)

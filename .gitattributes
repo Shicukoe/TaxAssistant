@@ -1,0 +1,2 @@
+# Script bash phải xuống dòng kiểu Linux (LF); nếu thành CRLF thì bash báo lỗi "$'\r': command not found".
+*.sh text eol=lf

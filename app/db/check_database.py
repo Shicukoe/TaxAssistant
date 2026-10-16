@@ -1,16 +1,12 @@
-"""Bài tự kiểm cho database. Chạy: python -m app.selfcheck
-
-ponytail: một check chạy được, không framework. Nó fail nếu schema sai, nếu
-migration không idempotent, hoặc nếu full-text tiếng Việt không bỏ dấu được —
-ba thứ mà mọi thứ về sau dựa lên.
+"""Bài tự kiểm cho database. Chạy: python -m app.db.check_database  (in ra PASS nếu ổn)
 """
 
 import psycopg
 
 from app import config
-from app.db.migrate import migrate
+from app.db.setup_database import apply_migrations
 
-TABLES = [
+EXPECTED_TABLES = [
     "documents",
     "document_relations",
     "provisions",
@@ -24,29 +20,29 @@ TABLES = [
 ]
 
 
-def check_migrations_idempotent() -> None:
-    migrate()
-    assert migrate() == [], "migrate() chạy lần hai phải không làm gì — hiện có làm"
-    print("ok  migration idempotent")
+def check_migrations_run_once() -> None:
+    apply_migrations()
+    assert apply_migrations() == [], "chạy migration lần hai phải không làm gì — hiện có làm"
+    print("ok  migration chỉ chạy một lần")
 
 
-def check_schema(conn: psycopg.Connection) -> None:
+def check_tables_and_extensions(conn: psycopg.Connection) -> None:
     found = {
         r[0]
         for r in conn.execute(
             "select table_name from information_schema.tables where table_schema = 'public'"
         )
     }
-    missing = [t for t in TABLES if t not in found]
+    missing = [t for t in EXPECTED_TABLES if t not in found]
     assert not missing, f"thiếu bảng: {missing}"
 
     exts = {r[0] for r in conn.execute("select extname from pg_extension")}
     for e in ("vector", "unaccent", "pg_trgm"):
         assert e in exts, f"thiếu extension {e}"
-    print(f"ok  {len(TABLES)} bảng + 3 extension")
+    print(f"ok  {len(EXPECTED_TABLES)} bảng + 3 extension")
 
 
-def check_roundtrip(conn: psycopg.Connection) -> None:
+def check_save_and_read_back(conn: psycopg.Connection) -> None:
     """Ghi rồi đọc lại xuyên documents → provisions → chunks → chunk_positions.
 
     Rollback ở cuối nên DB không bị bẩn.
@@ -149,7 +145,7 @@ def check_roundtrip(conn: psycopg.Connection) -> None:
     print("ok  round-trip documents→provisions→chunks→chunk_positions, đối chiếu span, unaccent")
 
 
-def check_constraints(conn: psycopg.Connection) -> None:
+def check_constraints_reject_bad_data(conn: psycopg.Connection) -> None:
     """Các CHECK phải thật sự cắn. Constraint không cắn là constraint không tồn tại."""
     cases = [
         (
@@ -180,11 +176,11 @@ def check_constraints(conn: psycopg.Connection) -> None:
 
 
 def main() -> None:
-    check_migrations_idempotent()
-    with psycopg.connect(config.DSN) as conn:
-        check_schema(conn)
-        check_roundtrip(conn)
-        check_constraints(conn)
+    check_migrations_run_once()
+    with psycopg.connect(config.DATABASE_CONNECTION) as conn:
+        check_tables_and_extensions(conn)
+        check_save_and_read_back(conn)
+        check_constraints_reject_bad_data(conn)
     print("\nPASS")
 
 

@@ -1,5 +1,5 @@
 -- Cấu trúc database ban đầu.
--- Mỗi bảng có chú thích giải thích vì sao nó tồn tại. Lý do chi tiết: docs/quyet-dinh.md
+-- Mỗi bảng có chú thích giải thích vì sao nó tồn tại. Lý do chi tiết: docs/architecture.md
 
 CREATE EXTENSION IF NOT EXISTS vector;      -- lưu vector ngay trong Postgres, không cần Qdrant
 CREATE EXTENSION IF NOT EXISTS unaccent;    -- Postgres không có cấu hình tiếng Việt → tìm kiếm bỏ dấu
@@ -163,10 +163,7 @@ CREATE INDEX amendments_eff_idx         ON amendments (eff_from);
 -- model_name/version là CỘT, không phải cấu hình: đổi model embedding là
 -- thêm một bộ vector mới, không phải migrate. Vector embed lại được nên
 -- việc chọn model không phải quyết định khoá.
---
--- ponytail: cột `vector` để không chiều vì model chưa chọn.
--- Chưa đặt được index HNSW/IVFFlat khi chưa cố định chiều — migration 002
--- ở bước "Tìm kiếm" sẽ thêm cột có chiều cụ thể + index sau khi đo xong model.
+-- Cột `vec` chưa có số chiều vì model embedding chưa chọn.
 -- =====================================================================
 CREATE TABLE embeddings (
     id            bigserial PRIMARY KEY,

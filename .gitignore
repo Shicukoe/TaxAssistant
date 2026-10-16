@@ -7,3 +7,5 @@ data/raw/
 data/ocr/
 *.log
 *.egg-info/
+dagster_home/*
+!dagster_home/dagster.yaml

@@ -141,6 +141,7 @@ Research found **no source in this domain with an explicit reuse licence**: gove
 - [ ] Responsive web app for the first user
 - [ ] Conditional violation assessment and "before vs after" comparisons
 - [ ] Weekly automated updates and monitoring
+- [ ] Next phase: self-hosted model (vLLM / SGLang) benchmarked against Claude on the test set, then move to a VPS
 
 **Evaluation plan:** a test set built from the first user's real questions, measuring article-level recall@5, the share of citations that match stored spans, and whether the system correctly says *"no legal basis found"* when the corpus doesn't cover a question.
 
@@ -151,14 +152,29 @@ Research found **no source in this domain with an explicit reuse licence**: gove
 Requires Python 3.12+ and PostgreSQL with the `pgvector` extension.
 
 ```bash
-cp .env.example .env              # then set PGPASSWORD
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .
 
-python -m app.db.migrate           # creates the database and schema
-python -m app.selfcheck            # should print PASS
+# One-time, as the Postgres superuser: least-privilege app role + database + extensions
+psql -U postgres -h 127.0.0.1 -f app/db/create_app_user.sql
+cp .env.example .env               # then set PGUSER=taxassistant and its PGPASSWORD
+
+python -m app.db.setup_database    # creates the database and schema
+python -m app.db.check_database    # should print PASS
+
+# Data pipeline (run in order)
+pip install -e ".[pipeline]"
+bash scripts/run_pipeline.sh         # whole pipeline once (Dagster); Git Bash on Windows or Linux
+bash scripts/run_pipeline.sh ui      # web UI + weekly schedule (runs while open)
+
+# Or one stage at a time
+python -m app.ingest.download_moj_documents   # tax documents from the Ministry of Justice API
+python -m app.ingest.download_from_congbao    # fallback source for documents the API lacks
+python -m app.ingest.save_to_database         # split into articles/clauses/points and load
 ```
+
+Each ingest module also has a network-free self-check: `python -m app.ingest.<module> --check`.
 
 The self-check verifies that migrations are idempotent, that the full schema and extensions exist, that clause spans read back correctly, that accent-insensitive search matches *"hoa don"* to *"hóa đơn"*, and that the schema's integrity constraints actually reject bad data.
 
@@ -168,13 +184,35 @@ The self-check verifies that migrations are idempotent, that the full schema and
 
 ```
 app/
-  config.py                    settings from .env, model pricing
-  db/migrate.py                forward-only SQL migration runner
-  db/migrations/001_init.sql   schema — each table documents why it exists
-  selfcheck.py                 runnable integrity checks
-docs/                          design documents (Vietnamese)
-  quyet-dinh.md                every design decision and its rationale
+  config.py                              settings from .env, model pricing
+  db/
+    create_app_user.sql                  one-time superuser script: app role owning only its database
+    setup_database.py                    create the database, apply SQL migrations
+    check_database.py                    runnable integrity checks
+    migrations/001_create_tables.sql     schema — each table documents why it exists
+    migrations/002_track_raw_source_and_parser.sql   which raw file and parser version produced each document
+  ingest/
+    download_moj_documents.py            sitemap → Ministry of Justice JSON + attachments, raw copies on disk
+    download_from_congbao.py             fallback: Official Gazette search for documents the API lacks
+    split_articles.py                    HTML → articles / clauses / points with character spans
+    save_to_database.py                  raw copies → documents, provisions, chunks, chunk_positions
+    stage_report.py                      per-stage report: counts and per-document failures
+  pipeline/
+    definitions.py                       Dagster assets + data-quality checks wiring the ingest stages
+dagster_home/dagster.yaml                Dagster config (run history and logs live here, not committed)
+scripts/run_pipeline.sh                  run the pipeline once, or open Dagster (UI + weekly schedule)
+CLAUDE.md                                entry point for AI coding agents: what to read, in what order
+docs/                                    design documents (Vietnamese)
+  project-overview.md          product, scope, success criteria
+  architecture.md              stack, folder boundaries, storage, invariants, cost
+  code-standards.md            coding conventions
+  ai-workflow-rules.md         how an AI agent must work on this repo
+  ui-context.md                UI constraints (mostly not decided yet)
+  progress-tracker.md          current state, next steps, open questions
   ke-hoach.md                  build plan with "done when" criteria
-  nguon-du-lieu.md             data-source research findings
+  nguon-du-lieu.md             data-source research findings, fallback sources
+  danh-gia.md                  guardrails and research-backed evaluation for every model stage
+  thu-bac-van-ban.md           legal hierarchy, conflict rules, status of guidance letters (cited to the law)
+  pipeline-du-lieu.md          what Dagster is, pipeline stages, checks, how to run and debug
   thuat-ngu.md                 domain glossary
 ```

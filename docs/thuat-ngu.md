@@ -12,7 +12,7 @@ Những từ dưới đây có nghĩa chính xác trong project này. Đọc tr�
 
 ## Văn bản
 
-**Văn bản quy phạm pháp luật (VBQPPL)** — Luật, Nghị định, Nghị quyết, Thông tư… Là **căn cứ pháp lý**. Danh sách đầy đủ ở Luật 64/2025 Điều 4.
+**Văn bản quy phạm pháp luật (VBQPPL)** — Luật, Nghị định, Nghị quyết, Thông tư… Là **căn cứ pháp lý**. Danh sách đầy đủ ở Luật 64/2025 Điều 4 (đã sửa bởi Luật 87/2025) — xem `thu-bac-van-ban.md`.
 Lưu ý: *Quyết định của Bộ trưởng* **không** nằm trong danh sách đó. Một văn bản có phải VBQPPL hay không tùy **ai ban hành**, không tùy tên loại.
 
 **Công văn** — hướng dẫn hoặc trả lời của cơ quan thuế. **Không phải VBQPPL**, nhưng kế toán dùng rất nhiều. Không có Điều — là văn xuôi, bên trong trích lại Điều của văn bản khác. Trích dẫn công văn bằng **số hiệu**, không bằng điều/khoản.

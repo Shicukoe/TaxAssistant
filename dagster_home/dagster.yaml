@@ -1,0 +1,11 @@
+# Cấu hình Dagster cho dự án. Thư mục này (dagster_home/) chứa lịch sử chạy và log;
+# chỉ file này được commit. scripts/run_pipeline.sh đặt DAGSTER_HOME trỏ vào đây.
+
+# Log từ logging.getLogger("app....") trong app/ingest hiện trong giao diện, tách theo từng công đoạn.
+python_logs:
+  managed_python_loggers:
+    - app
+  python_log_level: INFO
+
+telemetry:
+  enabled: false
