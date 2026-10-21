@@ -46,12 +46,12 @@ Nhịp làm: 9–16 giờ/tuần. Tổng ước tính: 3–4 tháng.
 
 ## 6. Trả lời — *2 tuần*
 
-**Làm:** viết câu trả lời bằng Claude, kiểm trích dẫn khớp với database, giới hạn chi phí.
-**Xong khi:** câu trả lời có trích dẫn đã kiểm; hết ngân sách thì app ngừng đúng lúc; bộ 20 câu hỏi kiểm tra chạy được và cho ra báo cáo: RAGAS, citation recall/precision, nhãn của mẹ (đúng / ảo giác / chưa đủ), độ khớp giữa giám khảo và mẹ — cách đo ở `danh-gia.md`.
+**Làm:** chạy model trên laptop bằng `llama-server` (Qwen3.5-4B 4-bit — ĐỀ XUẤT, chốt sau khi đo); lấy mốc thời gian bằng quy tắc (có test); phân loại loại thuế và loại câu hỏi bằng model trên máy (ép JSON schema), lưu kết quả để sau thay bằng classifier; viết câu trả lời, kiểm trích dẫn khớp với database; ghi token và thời gian chạy.
+**Xong khi:** câu trả lời có trích dẫn đã kiểm; đo được thời gian trả lời và bộ nhớ GPU trên laptop; bộ 20 câu hỏi kiểm tra chạy được và cho ra báo cáo: RAGAS, citation recall/precision, nhãn của mẹ (đúng / ảo giác / chưa đủ), độ khớp giữa giám khảo và mẹ — giám khảo là Claude, cách đo ở `danh-gia.md`.
 
 ## 7. Giao diện cho mẹ — *1–2 tuần*
 
-**Làm:** web app, lịch sử câu hỏi, trang xem chi phí, các nhãn bắt buộc (hết hiệu lực · công văn · OCR · không có căn cứ), dòng nhắc không nêu tên khách, cài mạng riêng để mẹ truy cập.
+**Làm:** web app, lịch sử câu hỏi, trang hiệu năng, các nhãn bắt buộc (hết hiệu lực · công văn · OCR · không có căn cứ), dòng nhắc không nêu tên khách, cài mạng riêng để mẹ truy cập.
 **Xong khi:** mẹ dùng được trên máy tính và điện thoại.
 
 ## 8. Đánh giá vi phạm và so sánh theo thời gian — *1–2 tuần*
@@ -62,7 +62,7 @@ Nhịp làm: 9–16 giờ/tuần. Tổng ước tính: 3–4 tháng.
 
 ## 9. Tự động cập nhật — *1 tuần*
 
-**Làm:** job hằng tuần lấy văn bản và công văn mới; cảnh báo khi cổng JSON lỗi hoặc chi phí sắp hết. Pipeline Dagster (`scripts/run_pipeline.sh`) đã có từ 15/10/2026 — lịch hằng tuần của Dagster có từ 16/10/2026 — bước này còn: thêm công văn, cảnh báo.
+**Làm:** job hằng tuần lấy văn bản và công văn mới; cảnh báo khi cổng JSON lỗi. Pipeline Dagster (`scripts/run_pipeline.sh`) đã có từ 15/10/2026 — lịch hằng tuần của Dagster có từ 16/10/2026 — bước này còn: thêm công văn, cảnh báo.
 **Xong khi:** job tự chạy mỗi tuần và bắt được văn bản mới.
 
 ---
@@ -71,6 +71,17 @@ Nhịp làm: 9–16 giờ/tuần. Tổng ước tính: 3–4 tháng.
 
 - Mẹ dùng thật ít nhất 4 tuần
 - Bộ câu hỏi kiểm tra cho kết quả ổn định
-- Chi phí thật nằm trong 300k/tháng
+- Model trên laptop trả lời trong thời gian chấp nhận được
 
-Đạt cả ba mới sang giai đoạn sau: tự host model (vLLM / SGLang), so với Claude trên bộ câu hỏi kiểm tra, rồi lên VPS.
+Đạt cả ba mới sang giai đoạn sau: lên VPS có GPU (vLLM / SGLang), đặt lại ngân sách thuê GPU.
+
+## Cải thiện model tự host (sau khi có mốc gốc)
+
+Chỉ làm khi bộ đo chỉ ra điểm yếu cụ thể. Không dùng đầu ra của Claude làm dữ liệu (quy tắc bất biến số 13).
+
+1. **SFT nhỏ:** câu trả lời mẹ sửa + câu model tự sinh rồi lọc bằng guardrail (rejection sampling, kiểu STaR).
+2. **RLVR bằng GRPO:** phần thưởng là các guardrail tất định (trích dẫn khớp, số có căn cứ, dẫn đúng Điều theo nhãn, từ chối khi không có căn cứ, đúng khuôn).
+3. **KTO / DPO** từ nút đúng/sai và bản sửa của mẹ.
+4. **Công văn trả lời doanh nghiệp** làm bộ hỏi–đáp có sẵn căn cứ (gắn mốc thời gian vì có thể dẫn luật cũ).
+
+GRPO trên 6 GB có lẽ chỉ làm được với model 0.8B–2B; 4B nhiều khả năng cần thuê GPU — chưa đo.

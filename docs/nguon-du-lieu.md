@@ -40,6 +40,8 @@ Vì vậy project chọn: **chỉ lấy dữ liệu công khai và không vi ph�
 
 **Cổng sửa văn bản sau khi đăng** (đo 15/10/2026): tải lại 20 văn bản còn hiệu lực đã lưu ngày 02/10 → 4 văn bản đổi nội dung HTML, 8 văn bản có trường nào đó đổi (phần lớn là `reviewStatus`), không văn bản nào đổi trạng thái hiệu lực. Có văn bản chỉ thêm markup (chữ y nguyên), có văn bản sửa chữ thật — Nghị định 41/2022/NĐ-CP khác 16 dòng ("KTH" → "KTTH", dấu ":" → ";"…). Vì vậy pipeline tải lại văn bản còn hiệu lực mỗi lần chạy và giữ bản cũ trong `history/`.
 
+**Trạng thái hiệu lực không lọc cứng được** (đo 22/10/2026 trên database): 90/107 văn bản hợp nhất có trạng thái **để trống** — gồm cả 113/VBHN-VPQH (hợp nhất Luật Thuế TNDN năm 2026). Luật gốc đang dùng thường mang `HHL1P` (hết hiệu lực một phần) chứ không phải `CHL` — ví dụ Luật Thuế TNDN 67/2025/QH15 sau khi bị Luật 09/2026/QH16 sửa. Lọc `eff_status_code = 'CHL'` loại mất đúng các văn bản cần nhất. Hiệu lực của văn bản hợp nhất phải suy từ văn bản được hợp nhất và từ chú thích; việc này thuộc bước Lịch sử sửa đổi.
+
 File 404 chủ yếu là .doc của văn bản trước 2003; danh sách ở `data/raw/moj/files/missing.txt`, bộ tải không thử lại. 8 văn bản cổng luôn trả lỗi 500 thì vẫn được thử lại mỗi lần (rẻ, và biết đâu cổng sửa).
 
 **Định dạng file đính kèm:** RTF mang đuôi .doc, .doc kiểu cũ (Word 97), PDF.

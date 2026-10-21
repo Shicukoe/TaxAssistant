@@ -50,6 +50,10 @@
 
 - FastAPI + template Jinja2 render từ server; JS thuần chỉ khi cần tương tác trên trình duyệt. Không bước build.
 - Route chỉ nhận yêu cầu, kiểm đầu vào, gọi xuống tầng tìm kiếm/trả lời, rồi render. Không gọi model hay viết SQL trong route.
+- **Luồng trả lời bằng LangGraph:** mỗi bước là một node — hàm **async** nhận state (TypedDict) và trả dict chứa phần cập nhật (đúng chữ ký trong mã nguồn `StateGraph`). Async vì `TimeoutPolicy` dựa vào huỷ asyncio; node đồng bộ bị chặn thì timeout không chạy.
+- Node không ghi database giữa chừng; chỉ node cuối ghi `questions`/`answers`. Lý do: `interrupt` và thử lại chạy lại node từ đầu — tác dụng phụ trước đó sẽ bị lặp.
+- State chỉ chứa thứ cần cho các bước sau (ô hiểu câu hỏi, id các đoạn tìm được, bản nháp, kết quả guardrail) — không nhét cả văn bản luật vào state.
+- `RetryPolicy` chỉ cho lỗi kết nối (`llama-server`, Postgres), không thử lại khi model trả lời kém.
 - Chi tiết bổ sung khi bắt đầu bước Trả lời.
 
 ## Tài liệu
@@ -65,6 +69,7 @@
 - `app/db/` — schema, migration, tạo user, bài tự kiểm database
 - `app/ingest/` — tải, tách, nạp văn bản; mỗi file một việc, tên là việc đó
 - `app/pipeline/definitions.py` — nối công đoạn thành pipeline Dagster; không chứa logic
+- `scripts/run_model_server.sh` — chạy `llama-server`; mỗi cờ có chú thích lý do, lấy từ README của đúng bản llama.cpp đang dùng
 - `scripts/run_pipeline.sh` — chạy pipeline / mở giao diện Dagster. Script viết bằng bash (chạy trên Git Bash và Linux), không viết PowerShell
 - `data/raw/` — bản gốc tải về, không commit
 - `docs/` — tài liệu; `CLAUDE.md` ở gốc là điểm vào

@@ -16,7 +16,7 @@ Chỉ số lấy từ nghiên cứu đã công bố (danh mục cuối file). Ch
 3. **Guardrail tất định đi trước giám khảo AI.** Cái gì kiểm được bằng so khớp chữ, so số thì không giao cho model chấm.
 4. **Giám khảo AI phải được hiệu chỉnh bằng người.** Mẹ chấm một mẫu; báo tỷ lệ khớp và Cohen's kappa giữa giám khảo và mẹ. ARES dùng vài trăm nhãn người để sửa sai số của giám khảo [ARES]; nghiên cứu về công cụ tra cứu luật dùng người có chuyên môn chấm theo bảng tiêu chí, kappa 0,77 giữa người chấm [Magesh].
 5. **Model viết câu trả lời không được tự chấm mình** — LLM giám khảo có thiên lệch tự khen, thiên lệch vị trí, thiên lệch thích câu dài [Zheng].
-6. **Chi phí đo tính vào ngân sách 300.000đ/tháng.** Chỉ chạy bộ đo khi có thay đổi, không chạy cho từng câu hỏi thật.
+6. **Giám khảo là Claude, chỉ trong bộ đo** (chốt 21/10/2026). Tốn tiền API, nên chỉ chạy bộ đo khi có thay đổi, không chạy cho từng câu hỏi thật. Điểm chấm của Claude **không bao giờ** làm dữ liệu huấn luyện (quy tắc bất biến số 13 trong `architecture.md`).
 7. **Kết quả mỗi lần đo được lưu lại** (ngày, phiên bản, con số) để so với lần trước.
 
 ---
@@ -78,17 +78,57 @@ Không dùng model (biểu thức chính quy), nhưng sai ở đây làm hỏng 
 
 ---
 
-## 4. Phân loại câu hỏi và lấy mốc thời gian — Haiku
+## 4. Hiểu câu hỏi — mốc thời gian (quy tắc), loại thuế và loại câu hỏi (model trên máy, sau thay bằng classifier)
 
-**Guardrail:** mốc thời gian **luôn hiện** đầu câu trả lời. Không đọc được mốc thì dùng hôm nay và ghi rõ "theo quy định hiện hành". Kết quả của Haiku phải đúng định dạng đã định (loại thuế trong danh sách cố định, ngày hợp lệ); sai định dạng thì bỏ qua và dùng mặc định.
+Chốt 18/10/2026: phần lấy thông tin phải đúng và càng tất định càng tốt, không dựa hoàn toàn vào suy đoán của model (quy tắc bất biến số 12 trong `architecture.md`).
 
-**Bài đo:** độ chính xác loại thuế; tỷ lệ lấy đúng mốc thời gian (so khớp chính xác ngày/năm). Dùng cùng bộ câu hỏi, gắn thêm nhãn.
+### 4a. Mốc thời gian — quy tắc, không dùng model
+
+**Guardrail:** mốc thời gian **luôn hiện** đầu câu trả lời. Không đọc được mốc thì dùng hôm nay và ghi rõ "theo quy định hiện hành". Câu có hai mốc ("so sánh 2025 và 2026") thì trả cả hai, không chọn một.
+
+**Bài đo:** tỷ lệ lấy đúng mốc, so khớp chính xác ngày/năm với nhãn. Mỗi mẫu câu nhận ra được có một test riêng; câu nào trong bộ câu hỏi thật bị đọc sai thì thêm thành test trước khi sửa quy tắc.
+
+### 4b. Loại thuế và loại câu hỏi — model trên máy tạm thời, sau là classifier
+
+**Guardrail:** kết quả phải nằm trong danh sách cố định (danh sách loại thuế: chưa chốt); sai định dạng thì bỏ qua và tìm không ưu tiên loại nào. **Loại thuế chỉ dùng để ưu tiên, không lọc cứng.**
+
+**Bài đo:**
+- Loại thuế (một câu có thể thuộc nhiều loại): precision và recall theo từng loại, và tỷ lệ câu có **ít nhất một loại đúng**.
+- Loại câu hỏi (tra cứu / vi phạm / so sánh trước–sau / ngoài phạm vi): độ chính xác và bảng nhầm lẫn. Nhầm "vi phạm" thành "tra cứu" là lỗi nặng nhất, vì câu trả lời mất khối nếu–thì; đếm riêng lỗi này.
+- Ảnh hưởng tới tìm kiếm: recall@5 **có và không có** ưu tiên theo loại thuế. Ưu tiên mà làm recall@5 giảm thì bỏ.
+
+**Thay bằng classifier** (chốt 18/10/2026). Tạm thời dùng model viết câu trả lời (Qwen) với đầu ra ép theo JSON schema. Mục đích của classifier là **có một bước tất định làm nền cho debug**: cùng câu hỏi + cùng phiên bản model → cùng nhãn, có xác suất để đặt ngưỡng, không cần mạng, tăng tốc được (ONNX Runtime, lượng tử hoá INT8).
+
+Model ứng viên (kiểm trên HuggingFace 18/10/2026):
+
+| Model | Kích thước | Giấy phép | Ghi chú |
+|---|---|---|---|
+| **mmBERT-small** [mmBERT] | 140M (42M không tính bảng từ) | MIT | **Thử trước.** Kiến trúc ModernBERT, nhanh; 1.800+ ngôn ngữ, có tiếng Việt; nhận chữ thô; 8.192 token. Hơn XLM-R theo model card — trên tiếng Việt chưa kiểm |
+| **BamiBERT** [BamiBERT] | ~103M | BSD-3-Clause-Clear **+ Qualcomm responsible AI license** | **Thử trước, sau khi đọc giấy phép thứ hai.** Model tiếng Việt mới nhất (07/2026), nhận chữ thô, 2.048 token; model card tự báo tốt nhất 11/15 chỉ số trên 8 bộ đo tiếng Việt |
+| PhoBERT-base (v1) [PhoBERT] | 135M | MIT | **Mốc so.** Bắt buộc tách từ trước bằng VnCoreNLP (cần Java); tối đa 256 token |
+| PhoBERT-base-v2 | 135M | **AGPL-3.0** | Không dùng trừ khi chấp nhận AGPL |
+| mDeBERTa-v3-base [DeBERTaV3] | 276M (86M thân + 190M bảng từ) | MIT | Mạnh ở phân loại/NLI, có tiếng Việt; chậm hơn |
+| XLM-RoBERTa-base | 279M | MIT | Mốc so cổ điển |
+| ViDeBERTa | — | không ghi | **Không dùng** — không có giấy phép |
+
+**Mốc so rẻ nhất, phải đo trước:** embedding của model đã chọn ở bước Tìm kiếm (không fine-tune) + logistic regression. Có thể thử thêm SetFit [SetFit] — bài báo báo cáo 8 câu mẫu mỗi lớp đã cạnh tranh được với fine-tune trên cả bộ huấn luyện, nhưng đo trên tiếng Anh, thí nghiệm đa ngôn ngữ không có tiếng Việt → **chưa kiểm**. Model fine-tune nào không vượt mốc này thì không giữ.
+
+**Dữ liệu nhãn** (chỗ khó nhất):
+- Trường "lĩnh vực" của cổng Bộ Tư pháp **không dùng làm nhãn được**: đo 18/10/2026 trên 3.160 văn bản, 1.515 (48%) ghi "Chưa phân loại", phần còn lại quá chung ("Quản lý thuế, phí và lệ phí": 895).
+- Gom nhãn từ: (1) quy tắc trên tiêu đề văn bản ("thuế giá trị gia tăng" → GTGT); (2) câu hỏi mẫu do **model có giấy phép mở** (Qwen, Apache-2.0) sinh từ từng Điều, mang nhãn của văn bản chứa Điều đó; (3) nhãn mẹ gắn hoặc xác nhận. **Không dùng nhãn hay câu hỏi do Claude sinh** (quy tắc bất biến số 13 — sửa 21/10/2026, trước đó có đề xuất dùng).
+- **Bộ đo chỉ gồm câu hỏi thật của mẹ** — câu hỏi sinh ra thường "sạch" hơn câu thật, đo trên đó sẽ ra số đẹp giả.
+
+**Quy trình:** lưu kết quả tạm thời + phản hồi của mẹ → đủ vài trăm câu có nhãn → đo mốc so → fine-tune mmBERT-small và BamiBERT, PhoBERT-base làm mốc → so với cách tạm thời trên cùng bộ đo → ngang hoặc hơn thì thay. Fine-tune trên GPU 6 GB với model cỡ base, câu ngắn, fp16: thường vừa, **chưa đo**.
+
+**Khi chạy:** mỗi câu hỏi ghi tên + phiên bản model, nhãn, xác suất. Xác suất dưới ngưỡng → không ưu tiên loại thuế nào và gắn cờ để xem lại (ngưỡng đặt sau mốc gốc).
+
+Thư viện cần thêm (`transformers`, `torch`, có thể `onnxruntime`) chỉ thêm khi tới bước này, nằm trong nhóm phụ thuộc riêng, và phải được người dùng đồng ý.
 
 **Làm ở bước:** Trả lời (bước 6).
 
 ---
 
-## 5. Xếp lại kết quả — Haiku
+## 5. Xếp lại kết quả — model chạy trên máy (ĐỀ XUẤT: cross-encoder, chọn ở bước Tìm kiếm)
 
 **Guardrail:** xếp lại chỉ đổi thứ tự trong danh sách đã tìm, không thêm văn bản ngoài danh sách.
 
@@ -98,7 +138,7 @@ Không dùng model (biểu thức chính quy), nhưng sai ở đây làm hỏng 
 
 ---
 
-## 6. Viết câu trả lời — Opus
+## 6. Viết câu trả lời — model tự host trên laptop
 
 Đây là công đoạn rủi ro nhất. Nghiên cứu trên các công cụ tra cứu luật thương mại (Lexis+ AI, Westlaw) đo được tỷ lệ ảo giác 17–33% dù chúng đều dùng RAG [Magesh].
 
@@ -109,9 +149,22 @@ Không dùng model (biểu thức chính quy), nhưng sai ở đây làm hỏng 
 | a | Mỗi đoạn trích khớp **từng chữ** với một đoạn đã lưu (`chunk_positions`) | Bỏ đoạn trích (đã thiết kế) |
 | b | Văn bản/Điều được dẫn phải nằm trong các đoạn đã tìm được cho câu hỏi này | Bỏ trích dẫn đó |
 | c | **Mọi con số** trong câu trả lời (tiền, tỷ lệ, ngày, thời hạn) phải xuất hiện trong đoạn được dẫn | Gắn cờ "con số chưa có căn cứ", không hiện như căn cứ |
-| d | Không có đoạn nào tìm được → trả lời "không có căn cứ trích dẫn" | Không gọi Opus viết câu trả lời có trích dẫn |
+| d | Không có đoạn nào tìm được → trả lời "không có căn cứ trích dẫn" | Không gọi model viết câu trả lời có trích dẫn |
 | e | Nhãn hết hiệu lực, công văn, OCR gắn theo dữ liệu, không theo lời model | — |
-| f | Trần chi phí tháng và giới hạn số câu mỗi 5 tiếng | Ngừng trả lời |
+| f | `llama-server` không trả lời trong thời gian chờ, hoặc hết bộ nhớ GPU | Báo lỗi rõ cho mẹ, không trả câu trả lời dở |
+
+### Phân loại lỗi khi câu trả lời sai
+
+Mỗi câu hỏi lưu kết quả trung gian của từng bước (mốc thời gian, nhãn + xác suất, danh sách đoạn tìm được, câu trả lời, kết quả guardrail). Câu trả lời sai thì so từng bước với nhãn, theo thứ tự, và ghi lỗi vào **loại đầu tiên** sai:
+
+| Loại lỗi | Nhận ra bằng | Sửa ở đâu |
+|---|---|---|
+| **Lấy sai thông tin** | Mốc thời gian / loại thuế / loại câu hỏi khác nhãn | Quy tắc mốc thời gian, classifier |
+| **Tìm sai** | Điều đúng không có trong top-5 sau xếp lại | Tìm kiếm, xếp lại |
+| **Suy luận sai** | Điều đúng có trong ngữ cảnh, kết luận sai | Prompt, cách đưa ngữ cảnh |
+| **Bịa** | Câu trả lời có mệnh đề không có trong ngữ cảnh (faithfulness, hallucination của [RAGChecker]) | Prompt, guardrail |
+
+Báo cáo của mỗi lần đo gồm số câu sai theo từng loại, để biết sửa chỗ nào trước.
 
 ### Bài đo ngoại tuyến
 
@@ -147,13 +200,13 @@ Chỉ số chính cho người dùng đọc: **tỷ lệ ảo giác** trên bộ
 
 **Công cụ**
 
-- **RAGAS** (`ragas`, Apache-2.0, bản 0.4.3): có sẵn faithfulness, response relevancy, context precision/recall, noise sensitivity. Dùng được với Claude làm giám khảo hay không: **chưa kiểm** — tài liệu chính chỉ có ví dụ với OpenAI.
+- **RAGAS** (`ragas`, Apache-2.0, bản 0.4.3): có sẵn faithfulness, response relevancy, context precision/recall, noise sensitivity. Dùng được với Claude làm giám khảo hay không: **chưa kiểm** — tài liệu chính chỉ có ví dụ với OpenAI. Đọc mã nguồn ragas trước khi viết code đo.
 - **RAGChecker** (Apache-2.0): có đủ các chỉ số mức mệnh đề ở trên. Lần cập nhật mã nguồn gần nhất: 12/2024 — có thể ít được bảo trì.
 - **ALCE** (MIT): chấm citation bằng mô hình NLI TRUE (T5-11B) — quá nặng cho máy này. Dùng **công thức** của ALCE, việc kiểm "đoạn có ủng hộ câu không" giao cho giám khảo AI.
 - Prompt của các công cụ này viết cho tiếng Anh; dùng cho câu trả lời tiếng Việt cần thử trước — **chưa kiểm**.
 - Cài như nhóm phụ thuộc riêng `[eval]` trong `pyproject.toml`, không lẫn vào app. Thêm khi tới bước Trả lời và người dùng đồng ý.
 
-**Giám khảo:** chưa chọn (câu hỏi mở trong `progress-tracker.md`). Không dùng Opus tự chấm mình [Zheng]. Giám khảo nào cũng phải qua bước hiệu chỉnh với nhãn của mẹ (nguyên tắc 4).
+**Giám khảo:** **Claude** (chốt 21/10/2026), không phải model viết câu trả lời — tránh thiên lệch tự khen [Zheng]. Các câu trong bộ đo được gửi lên API của Anthropic khi chấm. Giám khảo nào cũng phải qua bước hiệu chỉnh với nhãn của mẹ (nguyên tắc 4).
 
 **Làm ở bước:** Trả lời (bước 6). Đo lại mỗi khi đổi prompt, model, cách tìm kiếm.
 
@@ -166,7 +219,7 @@ Chỉ số chính cho người dùng đọc: **tỷ lệ ảo giác** trên bộ
 | 2. Lấy văn bản luật về | Báo cáo OCR: CER, WER, CER bỏ dấu, độ chính xác chữ số trên ~20 văn bản |
 | 4. Tìm kiếm | Bảng recall@5, MRR@10, nDCG@10 cho từ khóa / embedding / kết hợp |
 | 5. Công văn | Bài đo OCR chạy lại trên mẫu công văn scan |
-| 6. Trả lời | Báo cáo RAGAS + citation + nhãn của mẹ trên bộ câu hỏi kiểm tra; độ khớp giữa giám khảo và mẹ; kết quả guardrail a–f |
+| 6. Trả lời | Test cho từng mẫu câu mốc thời gian; độ chính xác loại thuế, loại câu hỏi và recall@5 có/không ưu tiên loại thuế; báo cáo RAGAS + citation + nhãn của mẹ trên bộ câu hỏi kiểm tra; độ khớp giữa giám khảo và mẹ; kết quả guardrail a–f |
 
 ---
 
@@ -182,4 +235,9 @@ Chỉ số chính cho người dùng đọc: **tỷ lệ ảo giác** trên bộ
 - **[Neudecker]** Clemens Neudecker và cộng sự. *A survey of OCR evaluation tools and metrics.* HIP '21. https://doi.org/10.1145/3476887.3476888
 - **[OCR-D]** Đặc tả đánh giá chất lượng OCR-D. https://ocr-d.de/en/spec/ocrd_eval
 - **[BEIR]** Nandan Thakur, Nils Reimers, Andreas Rücklé, Abhishek Srivastava, Iryna Gurevych. *BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models.* NeurIPS 2021 (Datasets and Benchmarks). arXiv:2104.08663. https://arxiv.org/abs/2104.08663
+- **[mmBERT]** *mmBERT: a modern multilingual encoder.* arXiv:2509.06888, 2025. https://arxiv.org/abs/2509.06888 — model `jhu-clsp/mmBERT-small`, `jhu-clsp/mmBERT-base`
+- **[BamiBERT]** Dat Quoc Nguyen, Thinh Pham, Chi Tran, Linh The Nguyen. arXiv:2607.02259, 2026. https://arxiv.org/abs/2607.02259 — model `Qualcomm-AI-Research/BamiBERT`
+- **[PhoBERT]** Dat Quoc Nguyen, Anh Tuan Nguyen. *PhoBERT: Pre-trained language models for Vietnamese.* Findings of EMNLP 2020. — model `vinai/phobert-base`
+- **[DeBERTaV3]** Pengcheng He, Jianfeng Gao, Weizhu Chen. *DeBERTaV3: Improving DeBERTa using ELECTRA-Style Pre-Training with Gradient-Disentangled Embedding Sharing.* arXiv:2111.09543. — model `microsoft/mdeberta-v3-base`
+- **[SetFit]** Lewis Tunstall, Nils Reimers, Unso Eun Seo Jo, Luke Bates, Daniel Korat, Moshe Wasserblat, Oren Pereg. *Efficient Few-Shot Learning Without Prompts.* arXiv:2209.11055, 2022. https://arxiv.org/abs/2209.11055
 - Tesseract: gói tiếng Việt `vie` trong `tesseract-ocr/tessdata_best` (Apache-2.0); bản cài Windows của UB Mannheim (Apache-2.0).

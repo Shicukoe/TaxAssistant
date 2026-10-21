@@ -35,12 +35,6 @@ DATABASE_CONNECTION = (
     f"host={PGHOST} port={PGPORT} user={PGUSER} password={PGPASSWORD} dbname={PGDATABASE}"
 )
 
-# --- Giới hạn chi phí (xem docs/architecture.md, mục Chi phí) ---
-BUDGET_MONTHLY_VND = int(os.getenv("BUDGET_MONTHLY_VND", "300000"))
-BUDGET_USD_PER_VND = float(os.getenv("BUDGET_USD_PER_VND", "0.0000385"))
-QUOTA_QUESTIONS_PER_5H = int(os.getenv("QUOTA_QUESTIONS_PER_5H", "10"))
-BUDGET_MONTHLY_USD = BUDGET_MONTHLY_VND * BUDGET_USD_PER_VND
-
 # --- Thu thập dữ liệu (xem docs/nguon-du-lieu.md) ---
 # vbpl.vn trả 403 với User-Agent mặc định của curl → cần UA kiểu browser.
 FETCH_USER_AGENT = os.getenv("FETCH_USER_AGENT", "Mozilla/5.0")
@@ -49,13 +43,21 @@ FETCH_DELAY_SECONDS = float(os.getenv("FETCH_DELAY_SECONDS", "2"))
 # Quy tắc: luôn lưu bản gốc ra đĩa trước khi xử lý — nguồn chính có thể tắt bất cứ lúc nào.
 RAW_DATA_DIR = PROJECT_ROOT / os.getenv("RAW_DATA_DIR", "./data/raw")
 
-# --- Claude API — chưa cần cho tới bước "Trả lời" ---
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-MODEL_FOR_ANSWERS = "claude-opus-5"  # viết câu trả lời — bước người dùng thật sự đọc
-MODEL_FOR_CHEAP_STEPS = "claude-haiku-4-5"  # phân loại câu hỏi, lọc kết quả
+# --- Model tự host trên laptop (xem docs/architecture.md, mục Model AI) ---
+# llama-server nói API kiểu OpenAI; đổi sang vLLM/SGLang trên VPS chỉ đổi địa chỉ này.
+# Khởi động server: bash scripts/run_model_server.sh (cổng mặc định của llama-server là 9931).
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://127.0.0.1:9931/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.5-4b")  # tên đặt bằng cờ -a của llama-server
+# Mọi lời gọi model gửi rõ temperature — không dựa vào mặc định của server (giá trị trong yêu cầu luôn thắng).
+# 0 = bám chữ trong ngữ cảnh nhất và lặp lại được; lý do chi tiết ở scripts/run_model_server.sh.
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
-# Giá USD/1M token — bảng giá đã verify 2026-09-28.
+# --- Giám khảo cho bộ đo — chỉ dùng khi chạy bộ đo, không bao giờ trong app ---
+# Điểm chấm của giám khảo không bao giờ làm dữ liệu huấn luyện (quy tắc bất biến số 13).
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "claude-opus-5-5")
+
+# Giá USD/1M token, theo bảng giá trong skill claude-api (bản lưu 2026-10-06) — kiểm lại khi viết bộ đo.
 PRICES_USD_PER_MILLION_TOKENS = {
-    "claude-opus-5": {"input": 5.0, "output": 25.0},
-    "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
+    "claude-opus-5-5": {"input": 4.0, "output": 20.0},
 }

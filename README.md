@@ -20,7 +20,7 @@ Answering tax questions with an LLM is easy. Answering them **correctly enough t
 | **Clauses don't stand alone** | Point (a) of a penalty clause says *"filing 61–90 days late"* — the fine (8–15M VND) is in the clause's lead sentence. Naive chunking retrieves the offence without the penalty. |
 | **Mixed legal authority** | Guidance letters (*công văn*) are heavily used but are **not** binding law. The system must rank and label them differently. |
 | **Scanned documents** | Older guidance letters are image-only PDFs. OCR can misread *8,000,000* as *3,000,000* — unacceptable in a quoted penalty amount. |
-| **Hard budget** | ~$11/month total, including API, hosting and storage. |
+| **Small hardware** | Everything runs on one laptop with a 6 GB GPU — the answer model is self-hosted, so the user's questions never leave the machine. |
 
 ---
 
@@ -43,11 +43,11 @@ So each chunk is a **whole article**, while the clause index still allows precis
 ### 4. Hybrid retrieval inside PostgreSQL
 Keyword search (Postgres full-text with an accent-insensitive Vietnamese setup) plus semantic search (**pgvector**), fused with reciprocal rank fusion. Results are filtered by the as-of date and ranked by legal authority: binding law before guidance letters. No separate vector database.
 
-### 5. Two-tier LLM usage
-**Claude Haiku 4.5** handles cheap steps: query classification, extracting the tax type and as-of date, reranking. **Claude Opus 5** writes only the final answer — the one step the user actually reads. Embeddings run **locally on an RTX 3060** at zero API cost.
+### 5. Small local models, deterministic where it matters
+The answer model is **self-hosted on the laptop** (llama.cpp `llama-server`, Qwen3.5-4B 4-bit). The **as-of date is extracted by deterministic rules**, not by a model: anything that decides whether an answer is right must be extracted deterministically where possible. Tax type and question type are classified by the local LLM with JSON-schema-constrained output for now; results are logged with user feedback so a small fine-tuned local encoder (mmBERT-small or BamiBERT, with PhoBERT and embeddings + logistic regression as baselines) can replace it once there are enough labels. The point is a deterministic first stage: same question, same label, with a probability, so every wrong answer can be attributed to wrong extraction, wrong retrieval, wrong reasoning, or hallucination. The tax type only *boosts* results, never hard-filters them. Embeddings and reranking also run locally.
 
 ### 6. A workflow, not an agent
-The pipeline is fixed in code; the model never decides to "search again". This was a deliberate choice: it keeps **per-question cost predictable** under a hard budget, guarantees the citation check always runs, and makes failures traceable to a specific stage.
+The pipeline is fixed in code; the model never decides to "search again". This was a deliberate choice: it keeps **per-question latency predictable** on a small GPU, guarantees the citation check always runs, and makes failures traceable to a specific stage.
 
 ### 7. Explicit responsibility boundary for legal judgement
 For "is this a violation?" questions, the system answers in **conditional branches** — *if A, then provision X applies, penalty Y, remediation Z* — with every remediation step and deadline backed by its own citation. It **never asserts** that a real situation is a violation. The model is responsible for the legal basis; the professional is responsible for the facts.
@@ -55,8 +55,8 @@ For "is this a violation?" questions, the system answers in **conditional branch
 ### 8. OCR is for retrieval only
 Text extracted from scanned PDFs is indexed so the document can be *found*, but is **never quoted**. For scanned sources the answer gives the document number and a link to the original. This is enforced at the schema level (`text_origin` column), not just in the prompt.
 
-### 9. Hard cost ceiling
-Every API response's token `usage` is priced and logged. The app refuses new questions once the monthly budget is spent, with an additional per-5-hour question quota.
+### 9. Measured, not assumed
+Every model call logs tokens and latency; a performance page shows answer time and GPU memory. Claude is used only as an offline evaluation judge (so the answer model never grades itself), and its outputs are never used as training data — Anthropic's Usage Policy forbids model distillation without authorization.
 
 ---
 
@@ -83,11 +83,11 @@ flowchart LR
     H --> I
 
     subgraph Query["Question answering"]
-        Q[Question] --> R[Haiku: classify<br/>tax type · as-of date]
+        Q[Question] --> R[Rules: as-of date<br/>local LLM: tax type · question type]
         R --> S[Hybrid search<br/>full-text + vector · RRF]
         S --> T[Filter by as-of date<br/>rank by legal authority]
-        T --> U[Haiku rerank]
-        U --> V[Opus: answer]
+        T --> U[Local reranker]
+        U --> V[Qwen3.5-4B on llama-server: answer]
         V --> W{Citations match<br/>stored spans?}
         W -- yes --> X[Answer + verified citations]
         W -- no --> Y[Drop unverified quote]
@@ -120,7 +120,9 @@ Research found **no source in this domain with an explicit reuse licence**: gove
 | Language | Python 3.12 |
 | API & web | FastAPI, server-rendered HTML (no frontend build step) |
 | Database | PostgreSQL 18 · pgvector · unaccent · pg_trgm |
-| LLMs | Claude Haiku 4.5 (routing, reranking) · Claude Opus 5 (answers) |
+| Answer orchestration | LangGraph `StateGraph` with a Postgres checkpointer (multi-turn conversations, per-step state history, streaming, retries, timeouts) — fixed edges, no agent loop |
+| LLM serving | llama.cpp `llama-server` (CUDA 12.4), OpenAI-compatible API · Qwen3.5-4B Q4_K_M (proposed, pending measurement) |
+| Evaluation judge | Claude, offline eval runs only — never in the app, never as training data |
 | Embeddings | Local model on NVIDIA RTX 3060 (6 GB) |
 | Document processing | httpx · lxml · pypdf · OCR |
 | Access (early stage) | Private VPN tunnel — nothing exposed to the public internet |
@@ -131,17 +133,19 @@ Research found **no source in this domain with an explicit reuse licence**: gove
 
 - [x] Discovery: requirements, constraints and user journeys with the first user
 - [x] Data-source research: licensing, API behaviour, document structure, coverage
-- [x] System design: chunking, point-in-time model, citation verification, cost control
-- [ ] **Database schema, migrations and self-check** *(written; verification pending)*
-- [ ] Ingest tax legislation from the Ministry of Justice API
+- [x] System design: chunking, point-in-time model, citation verification
+- [x] Database schema, migrations and self-check (Postgres 18 + pgvector 0.8.7)
+- [x] Ingest tax legislation from the Ministry of Justice API — 2,865 documents, 12,353 articles, automated with Dagster
+- [ ] **Self-hosted answer model on the laptop** (llama-server + Qwen3.5) — in progress
 - [ ] Amendment history from consolidated-document footnotes
 - [ ] Hybrid retrieval + embedding model selection, measured on real user questions
 - [ ] Guidance-letter ingestion with PDF classification and OCR
-- [ ] Answer generation with citation verification and budget enforcement
+- [ ] Answer generation with citation verification and latency/GPU monitoring
 - [ ] Responsive web app for the first user
 - [ ] Conditional violation assessment and "before vs after" comparisons
 - [ ] Weekly automated updates and monitoring
-- [ ] Next phase: self-hosted model (vLLM / SGLang) benchmarked against Claude on the test set, then move to a VPS
+- [ ] Improve the local model only where the eval shows a gap: SFT on the user's corrections, RL with the deterministic guardrails as verifiable rewards (GRPO), KTO/DPO from thumbs up/down
+- [ ] Next phase: GPU VPS with vLLM / SGLang
 
 **Evaluation plan:** a test set built from the first user's real questions, measuring article-level recall@5, the share of citations that match stored spans, and whether the system correctly says *"no legal basis found"* when the corpus doesn't cover a question.
 
@@ -149,7 +153,7 @@ Research found **no source in this domain with an explicit reuse licence**: gove
 
 ## Getting started
 
-Requires Python 3.12+ and PostgreSQL with the `pgvector` extension.
+Requires Python 3.12+ and PostgreSQL with the `pgvector` extension. The Windows PostgreSQL installer does not ship pgvector; build it with Visual Studio Build Tools (`nmake /F Makefile.win`, see the pgvector README) and copy the files into the PostgreSQL folder as administrator. Run `psql` in cmd or Windows Terminal, not Git Bash: psql on Windows reads passwords from the console.
 
 ```bash
 python -m venv .venv
@@ -162,6 +166,9 @@ cp .env.example .env               # then set PGUSER=taxassistant and its PGPASS
 
 python -m app.db.setup_database    # creates the database and schema
 python -m app.db.check_database    # should print PASS
+
+# Answer model (self-hosted): llama.cpp build + GGUF live outside the repo (default D:/models)
+bash scripts/run_model_server.sh     # llama-server on 127.0.0.1:9931, OpenAI-compatible API + built-in chat UI
 
 # Data pipeline (run in order)
 pip install -e ".[pipeline]"
@@ -201,6 +208,7 @@ app/
     definitions.py                       Dagster assets + data-quality checks wiring the ingest stages
 dagster_home/dagster.yaml                Dagster config (run history and logs live here, not committed)
 scripts/run_pipeline.sh                  run the pipeline once, or open Dagster (UI + weekly schedule)
+scripts/run_model_server.sh              start llama-server with the answer model (flags documented inline)
 CLAUDE.md                                entry point for AI coding agents: what to read, in what order
 docs/                                    design documents (Vietnamese)
   project-overview.md          product, scope, success criteria

@@ -4,7 +4,7 @@ Phần lớn **chưa chốt** — làm ở bước Giao diện cho mẹ (`ke-hoa
 
 ## Người dùng và thiết bị
 
-- Mẹ: kế toán có kinh nghiệm, đọc nhiều chữ, cần kiểm lại căn cứ. Giao diện phục vụ **đọc và đối chiếu**, không phải trò chuyện.
+- Mẹ: kế toán có kinh nghiệm, đọc nhiều chữ, cần kiểm lại căn cứ. Giao diện phục vụ **đọc và đối chiếu**. Có hỏi nối tiếp trong một cuộc hội thoại (chốt 21/10/2026), nhưng mỗi câu trả lời vẫn đủ căn cứ như câu hỏi đầu, không trả lời kiểu tán gẫu.
 - Máy tính là chính; điện thoại phải dùng được.
 - Toàn bộ chữ trên giao diện bằng tiếng Việt.
 
@@ -48,9 +48,9 @@ Không dùng. HTML/CSS/JS thuần, template Jinja2 render từ server, không b�
 
 Ba màn hình:
 
-1. **Hỏi – đáp:** ô nhập câu hỏi + dòng nhắc bên dưới; câu trả lời; danh sách căn cứ.
-2. **Lịch sử:** các câu đã hỏi, mở lại được câu trả lời cũ.
-3. **Chi phí:** đã dùng bao nhiêu trong tháng, còn bao nhiêu, còn bao nhiêu câu trong 5 tiếng.
+1. **Hỏi – đáp:** các lượt hỏi–đáp của cuộc hội thoại đang mở, xếp từ trên xuống; ô nhập + dòng nhắc bên dưới; mỗi câu trả lời có danh sách căn cứ riêng; nút **cuộc hội thoại mới** (bỏ ngữ cảnh lượt trước). Khi câu hỏi nối tiếp mang ngữ cảnh từ lượt trước, hiện rõ ngữ cảnh đã dùng (ví dụ "hộ kinh doanh · thuế GTGT · mốc 2026").
+2. **Lịch sử:** các cuộc hội thoại đã có, mở lại được từng lượt hỏi–đáp.
+3. **Hiệu năng** (thay trang chi phí từ 21/10/2026): thời gian trả lời, số câu đã hỏi, bộ nhớ GPU.
 
 Bố cục cụ thể: chưa chốt.
 
@@ -63,7 +63,7 @@ Những thứ này là yêu cầu sản phẩm, không được bỏ:
 - **Khối căn cứ:** tên văn bản, Điều/khoản/điểm, đoạn trích nguyên văn, link bản gốc.
 - **Nhãn:** hết hiệu lực · hết hiệu lực một phần · công văn · OCR (chỉ số hiệu + link, không trích) · không có căn cứ.
 - **Khối nếu–thì** cho câu hỏi vi phạm: điều kiện và cách xử lý nằm **cùng một khối**, đủ mọi trường hợp.
-- **Thông báo hết ngân sách** khi app ngừng trả lời.
+- **Thông báo khi model trên laptop không chạy** (chưa bật `llama-server`, hết bộ nhớ GPU) thay cho câu trả lời.
 
 ## Icon
 

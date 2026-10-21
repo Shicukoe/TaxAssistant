@@ -9,3 +9,6 @@ data/ocr/
 *.egg-info/
 dagster_home/*
 !dagster_home/dagster.yaml
+CLAUDE.md
+# Thư mục tạm Dagster tự tạo khi chạy mà chưa đặt DAGSTER_HOME
+.tmp_dagster_home_*/

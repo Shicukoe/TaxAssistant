@@ -14,14 +14,17 @@ Cập nhật: 15/10/2026. Muốn đổi một lựa chọn ở đây thì sửa 
 | Lưu vector | **pgvector** trong Postgres | Không cần Qdrant — chữ, vị trí trích dẫn và vector ở cùng một chỗ, một câu SQL làm được cả lọc hiệu lực lẫn tìm |
 | Embedding | Model chạy trên **GPU RTX 3060 Laptop (6 GB)** | Miễn phí. Model cụ thể chọn sau khi đo ở bước Tìm kiếm |
 | OCR | **Tesseract**, gói tiếng Việt `vie` (chốt 13/10/2026) | Nhẹ, chạy bằng CPU. Unlimited-OCR (~6,7 GB) không vừa GPU 6 GB. Độ chính xác đo theo `danh-gia.md` |
-| Model AI | **Claude Haiku** cho việc rẻ (phân loại câu hỏi, lấy mốc thời gian, xếp lại kết quả), **Claude Opus** để viết câu trả lời | Chỉ trả giá cao ở bước người dùng thật sự đọc |
+| Model AI | **Tự host trên laptop** (chốt 21/10/2026): **Qwen3.5-4B** bản GGUF lượng tử 4-bit (`Q4_K_M`, file 2,74 GB) — ĐỀ XUẤT, chốt sau khi đo — viết câu trả lời và tạm thời phân loại câu hỏi. **Mốc thời gian lấy bằng quy tắc, không dùng model** (chốt 18/10/2026). Không dùng Claude API trong app | Học tự host, câu hỏi của mẹ không ra khỏi máy. Bản 9B không vừa 6 GB VRAM |
+| Chạy model | **llama.cpp `llama-server`** (chốt 21/10/2026), bản dựng sẵn Windows CUDA 12.4 (khớp driver 552.44) | API kiểu OpenAI, ép đầu ra theo JSON schema; mọi tham số (context, số lớp lên GPU, KV cache) là cờ lệnh rõ ràng. File model để ở ổ D |
+| Giám khảo bộ đo | **Claude** (chốt 21/10/2026), **chỉ** dùng khi chạy bộ đo, không dùng trong app | Model viết câu trả lời không tự chấm mình. Điểm của Claude không bao giờ làm dữ liệu huấn luyện (quy tắc số 13) |
 | Cấu hình | **python-dotenv**, file `.env` | Bí mật không nằm trong code |
+| Điều phối luồng trả lời | **LangGraph** (chốt 21/10/2026): `StateGraph`, checkpointer Postgres (`langgraph-checkpoint-postgres`), `stream_mode` để gửi tiến độ và từng token lên giao diện, `RetryPolicy` cho lỗi kết nối, `TimeoutPolicy` | Có sẵn lưu trạng thái cho hội thoại nhiều lượt, xem lại state sau từng bước, chạy lại từ một bước. Không dùng agent dựng sẵn, Deep Agents, LangSmith, vector store của LangChain |
 | Điều phối pipeline | **Dagster** (chốt 15/10/2026) | Mỗi công đoạn là một asset: log riêng từng công đoạn, công đoạn lỗi thì bước sau dừng còn bước độc lập vẫn chạy, có kiểm chất lượng dữ liệu (asset check) và giao diện web xem lịch sử chạy |
 | Truy cập từ xa | **VPN mạng riêng** kiểu Tailscale | Không mở gì ra internet |
 
 ## Ranh giới thư mục
 
-- `app/config.py` — đọc `.env`, chứa mọi hằng số cấu hình (kết nối DB, ngân sách, tốc độ tải, tên model, bảng giá). Nơi duy nhất đọc biến môi trường.
+- `app/config.py` — đọc `.env`, chứa mọi hằng số cấu hình (kết nối DB, địa chỉ `llama-server`, tốc độ tải, tên model, bảng giá giám khảo). Nơi duy nhất đọc biến môi trường.
 - `app/db/` — schema và công cụ database: `create_app_user.sql` (chạy một lần bằng tài khoản quản trị), `setup_database.py` (tạo database, chạy migration), `check_database.py` (bài tự kiểm), `migrations/` (file `.sql` đánh số, chỉ đi tiến).
 - `app/ingest/` — lấy văn bản về và đưa vào database. Chỉ ghi các bảng văn bản (`documents`, `provisions`, `chunks`, `chunk_positions`, sau này `amendments`, `embeddings`). Không gọi model AI.
   - `download_moj_documents.py` — sitemap vbpl.vn → JSON cổng Bộ Tư pháp + file đính kèm → `data/raw/moj/`
@@ -38,7 +41,7 @@ Cập nhật: 15/10/2026. Muốn đổi một lựa chọn ở đây thì sửa 
 Dự kiến, **chưa có** (đặt tên khi tới bước tương ứng):
 
 - thư mục tìm kiếm (bước Tìm kiếm) — đọc DB, không gọi model viết câu trả lời
-- thư mục trả lời (bước Trả lời) — **chỗ duy nhất gọi model AI**, kiểm trích dẫn, ghi chi phí
+- thư mục trả lời (bước Trả lời) — **chỗ duy nhất gọi model AI**, kiểm trích dẫn, ghi token và thời gian chạy
 - thư mục web (bước Giao diện) — FastAPI + template; không chứa logic tìm kiếm hay gọi model trực tiếp
 
 ## Lưu trữ
@@ -51,8 +54,9 @@ Dự kiến, **chưa có** (đặt tên khi tới bước tương ứng):
   - `chunk_positions` — vị trí ký tự của từng khoản/điểm trong đoạn → dùng để kiểm trích dẫn
   - `amendments` — lịch sử sửa đổi lấy từ chú thích văn bản hợp nhất, tới mức cụm từ
   - `embeddings` — vector của từng đoạn
-  - `questions`, `answers` — lịch sử hỏi đáp
-  - `usage_log` — token và chi phí của từng lần gọi model
+  - `questions`, `answers` — lịch sử hỏi đáp, **bản ghi chính thức** (lịch sử của mẹ, bộ đo, trang hiệu năng chỉ đọc ở đây). `questions` sẽ có `thread_id` nối sang checkpoint (migration khi viết bước Trả lời)
+  - bảng checkpoint của LangGraph (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`, do `.setup()` tạo) — **trạng thái lúc chạy**, gồm cả bản nháp trước guardrail. Không hiển thị câu trả lời từ đây. Giá trị đơn giản (mốc thời gian, loại thuế) đọc được bằng JSONB; list/dict nằm ở `checkpoint_blobs` (msgpack), đọc bằng `get_state_history`
+  - `usage_log` — token, thời gian chạy (và chi phí, với lời gọi giám khảo Claude) của từng lần gọi model
 - **Đĩa** (`data/raw/`, không commit): JSON gốc của cổng Bộ Tư pháp, file PDF/DOC/RTF đính kèm, file tải từ congbao. Database có thể dựng lại hoàn toàn từ đây.
   - Cổng Bộ Tư pháp **có sửa văn bản sau khi đăng**: đo 15/10/2026, 4/20 văn bản còn hiệu lực đổi nội dung sau 13 ngày. Vì vậy mỗi lần chạy tải lại văn bản còn hiệu lực; khác thì giữ bản cũ trong `history/`.
   - Mỗi dòng `documents` ghi `raw_sha256` (bản gốc nào) và `parser_version` (bộ tách nào) → chỉ nạp lại văn bản thật sự thay đổi, và truy được dữ liệu sinh từ đâu.
@@ -89,28 +93,34 @@ Văn bản không có Điều (thông tư cũ chia theo Phần / Mục / I. / 1.
 
 - **Giai đoạn đầu:** app chạy trên laptop. Mẹ truy cập qua VPN mạng riêng — không mở cổng nào ra internet, chưa cần đăng nhập, chưa cần domain. Ai vào được mạng riêng là vào được app.
 - **Database:** app kết nối bằng user riêng `taxassistant`, chỉ có quyền trên database `taxassistant` (quyền kết nối của PUBLIC bị thu hồi). Tài khoản `postgres` chỉ dùng cho `create_app_user.sql`.
-- **Bí mật** (mật khẩu DB, API key) chỉ nằm trong `.env`, không bao giờ vào code hay git.
-- **Dữ liệu của khách:** câu hỏi được gửi lên API của Anthropic (xóa sau 30 ngày, mặc định không dùng để huấn luyện — theo chính sách công bố). Mẹ hỏi không nêu tên khách; giao diện có dòng nhắc.
+- **Bí mật** (mật khẩu DB, API key của giám khảo) chỉ nằm trong `.env`, không bao giờ vào code hay git.
+- **Dữ liệu của khách:** câu hỏi của mẹ được trả lời bằng model chạy trên laptop, **không ra khỏi máy** (từ 21/10/2026). Ngoại lệ duy nhất: các câu trong **bộ câu hỏi kiểm tra** (lấy từ câu hỏi thật, đã bỏ tên khách) được gửi lên API của Anthropic khi chạy giám khảo. Mẹ vẫn hỏi không nêu tên khách; giao diện có dòng nhắc.
 - **Khi có nhiều người dùng:** đăng nhập và tách lịch sử theo tài khoản — chưa thiết kế, làm khi lên VPS.
 
 ## Model AI
 
-- **Quy trình cố định trong code, không phải agent.** Model không tự quyết "tìm thêm". Lý do: chi phí mỗi câu hỏi dự đoán được, bước kiểm trích dẫn luôn chạy, lỗi truy được về đúng bước.
-- **Các bước:** Haiku phân loại câu hỏi + lấy mốc thời gian → tìm kiếm kết hợp → lọc theo hiệu lực tại mốc, xếp văn bản luật trước công văn → Haiku xếp lại → Opus viết câu trả lời → kiểm từng trích dẫn với `chunk_positions`.
+- **Quy trình cố định trong code, không phải agent.** Model không tự quyết "tìm thêm". Lý do: thời gian mỗi câu hỏi dự đoán được, bước kiểm trích dẫn luôn chạy, lỗi truy được về đúng bước. Điều phối bằng **LangGraph** (chốt 21/10/2026) với các cạnh cố định; phần dữ liệu và kiểm trích dẫn là code của dự án.
+- **Hội thoại nhiều lượt** (chốt 21/10/2026): mỗi cuộc hội thoại là một `thread_id`. Lượt sau mang sang các **ô có cấu trúc** của lượt trước (loại thuế, đối tượng, văn bản đang bàn, mốc thời gian) và chỉ thay ô mà câu mới nêu — mốc thời gian vẫn đọc bằng quy tắc. Không đưa cả lịch sử hội thoại vào model (ngữ cảnh 4B có hạn).
+- **Quy tắc dùng LangGraph:** (1) `answers` là bản ghi chính thức, checkpoint chỉ là trạng thái lúc chạy; (2) `questions.thread_id` nối hai nơi; (3) `durability="async"` — ghi checkpoint song song với bước sau, không chặn luồng; (4) luôn đặt `LANGGRAPH_STRICT_MSGPACK=true` (README của checkpointer cảnh báo đọc lại checkpoint có thể bị lợi dụng chạy code); (5) ghim phiên bản LangGraph trong `pyproject.toml`; (6) xoá lịch sử của mẹ phải xoá cả hai nơi. Kết nối của checkpointer phải có `autocommit=True` và `row_factory=dict_row` (theo README).
+- **Các bước:** lấy mốc thời gian bằng quy tắc + model trên máy phân loại loại thuế, loại câu hỏi (ép JSON schema) → tìm kiếm kết hợp → lọc theo hiệu lực tại mốc, xếp văn bản luật trước công văn → xếp lại bằng model chạy trên máy (ĐỀ XUẤT: cross-encoder như bge-reranker-v2-m3 — chọn ở bước Tìm kiếm) → model trên máy viết câu trả lời → kiểm từng trích dẫn với `chunk_positions`.
 - **Embedding chạy trên máy**, không qua API.
-- **Mọi lời gọi model nằm ở một chỗ duy nhất** (chốt 08/10/2026), để sau này đổi sang model tự host chỉ sửa chỗ đó.
+- **Hiểu câu hỏi** (chốt 18/10/2026):
+  - **Mốc thời gian:** quy tắc (regex) trên các mẫu câu như "năm 2025", "trước 1/7/2025", "hiện nay". Không đọc được thì dùng hôm nay và ghi rõ. Mỗi mẫu câu có test.
+  - **Loại thuế, loại câu hỏi:** tạm dùng model viết câu trả lời (Qwen) với đầu ra ép theo JSON schema. Khi đủ vài trăm câu có nhãn (từ mẹ và quy tắc — không từ Claude): fine-tune một encoder nhỏ chạy trên máy (thử mmBERT-small và BamiBERT, PhoBERT-base làm mốc; embedding + logistic regression là mốc rẻ nhất), so với cách tạm thời trên cùng bộ đo, ngang thì thay. Mục đích: một bước tất định làm nền cho debug — cùng câu hỏi ra cùng nhãn, có xác suất. Chi tiết và cách phân loại lỗi: `danh-gia.md` mục 4b và 6.
+  - **Loại thuế chỉ dùng để ưu tiên kết quả, không lọc cứng.** Phân loại sai mà lọc cứng thì Điều đúng bị loại khỏi kết quả tìm kiếm.
+- **Mọi lời gọi model nằm ở một chỗ duy nhất** (chốt 08/10/2026). Nói theo API kiểu OpenAI của `llama-server`, nên đổi sang vLLM/SGLang trên VPS chỉ đổi địa chỉ.
 
-## Chi phí
+## Chi phí và hiệu năng
 
-- **Ngân sách:** 300.000đ/tháng cho tất cả. Khi mở rộng có thể tăng lên 500–700k, nhưng chỉ sau khi đã thấy kết quả với ít người dùng.
-- **Ước tính:** khoảng 1.700đ/câu hỏi → khoảng 170 câu/tháng. Đủ cho mẹ, **không đủ** cho 50 người dùng thường xuyên.
-- **Trần cứng:** cộng chi phí từ `usage` của mỗi phản hồi API; hết ngân sách tháng thì ngừng trả lời; thêm giới hạn số câu mỗi 5 tiếng.
-- Không đọc được "% còn lại" từ tài khoản Claude — gói Claude Pro và API là hai đường tính tiền riêng.
+- **App không còn chi phí API** (từ 21/10/2026): model chạy trên laptop. Bỏ trần ngân sách 300.000đ/tháng và giới hạn số câu mỗi 5 tiếng; trang chi phí thành **trang hiệu năng** (thời gian trả lời, số câu, bộ nhớ GPU).
+- **Chi phí còn lại:** giám khảo Claude khi chạy bộ đo — tính từ `usage` của mỗi phản hồi, ghi `usage_log`. Chỉ chạy bộ đo khi đổi model, prompt hay cách tìm kiếm.
+- **Khi lên VPS có GPU:** tiền thuê GPU thành chi phí chính — đặt lại ngân sách lúc đó.
 
 ## Chạy ở đâu
 
 - **Giai đoạn đầu:** laptop, qua VPN mạng riêng.
-- **Giai đoạn sau: tự host model** (chốt 08/10/2026). Làm với Claude API trước; khi mọi bước đã chạy ổn mới tự host model (vLLM / SGLang) rồi đưa lên VPS. Lý do: giữ câu hỏi của mẹ không ra khỏi máy mình, và học tự deploy. Chỉ chuyển khi bộ câu hỏi kiểm tra cho thấy model tự host đạt chất lượng gần bằng Claude.
+- **Tự host ngay từ bây giờ** (chốt 21/10/2026, thay quyết định 08/10/2026 "Claude API trước"): `llama-server` trên laptop. Lý do: học tự host, xây harness và deploy; đầu ra của Claude không dùng được để huấn luyện model tự host (quy tắc số 13), nên làm trước bằng Claude ít giá trị.
+- **Giai đoạn sau:** lên VPS có GPU, chạy vLLM hoặc SGLang (cần Linux), có thể dùng model lớn hơn (Qwen3.5-9B) nếu bộ đo cho thấy cần.
 - **Khi lên VPS:** VPS thường không có GPU → chạy embedding bằng CPU, hoặc dùng dịch vụ embedding qua API và tính lại vector cho toàn bộ dữ liệu (việc một buổi). Database chạy trên chính VPS.
 
 ## Quy tắc bất biến
@@ -123,11 +133,13 @@ Code không bao giờ được phá các quy tắc này. Thấy cần phá → d
 4. **Tôn trọng nguồn dữ liệu:** mọi lần tải đi qua `download_and_save` với khoảng nghỉ `FETCH_DELAY_SECONDS`; tuân thủ robots.txt (không gọi `/api/`, `/Pages/` của vbpl.vn); không vượt CAPTCHA; không dùng thuvienphapluat.vn, luatvietnam.vn; ghi nguồn congbao.chinhphu.vn và gdt.gov.vn.
 5. **Mọi câu trả lời gắn với một mốc thời gian** và chỉ dùng căn cứ có hiệu lực tại mốc đó (hoặc gắn nhãn hết hiệu lực).
 6. **Bot không kết luận vi phạm.** Câu hỏi vi phạm luôn trả lời dạng nếu–thì, đủ mọi trường hợp, mỗi cách xử lý có căn cứ riêng.
-7. **Mọi lời gọi model đi qua một chỗ duy nhất**, mỗi lời gọi ghi `usage_log`, và hết ngân sách thì không gọi nữa.
+7. **Mọi lời gọi model đi qua một chỗ duy nhất**, và mỗi lời gọi ghi `usage_log` (token, thời gian chạy; chi phí với lời gọi giám khảo).
 8. **Bí mật không vào code, log hay git.** `.env` không bao giờ được commit.
 9. **App dùng user `taxassistant`**, không dùng `postgres`.
 10. **Không công đoạn dùng model nào được đưa vào dùng khi chưa có bài đo trong `danh-gia.md` và chưa có kết quả mốc gốc.** Mỗi lần đổi prompt, model hay cách tìm kiếm phải đo lại, và chỉ số chính không được xấu đi.
 11. **Một văn bản lỗi không được làm hỏng cả công đoạn.** Mỗi văn bản tự bắt lỗi của mình, lỗi được ghi kèm id và lý do, công đoạn chạy tiếp. Công đoạn chỉ dừng khi nguồn có dấu hiệu sập (nhiều lỗi liên tiếp) — và khi đó báo lỗi rõ ràng, không `sys.exit`.
+12. **Thông tin quyết định câu trả lời đúng hay sai được lấy bằng cách tất định khi làm được** (quy tắc, so khớp, tra bảng). Model chỉ dùng ở chỗ quy tắc không làm được; kết quả của model phải đo được đúng sai trên bộ có nhãn, và không được dùng để lọc cứng căn cứ.
+13. **Không dùng đầu ra của Claude** (câu trả lời, nhãn, điểm chấm, tóm tắt suy luận) **làm dữ liệu huấn luyện bất kỳ model nào**, trừ khi Anthropic cho phép bằng văn bản. Căn cứ: Usage Policy của Anthropic ("Use outputs to train an AI model (e.g., "model scraping" or "model distillation") without prior authorization"), Commercial Terms mục D.4. Dữ liệu huấn luyện chỉ lấy từ mẹ, từ quy tắc, từ dữ liệu luật, và từ model có giấy phép mở.
 
 ## Rủi ro đã biết
 

@@ -19,19 +19,19 @@ Chatbot tra cứu pháp luật thuế Việt Nam. Người dùng hỏi bằng ti
 1. **Không có trích dẫn sai.** 100% trích dẫn hiện ra khớp từng chữ với đoạn văn bản đã lưu trong database. Trích dẫn không khớp thì không hiện. Đo thêm citation recall/precision và tỷ lệ ảo giác — xem `danh-gia.md`.
 2. **Tìm đúng Điều.** Với bộ câu hỏi thật của mẹ, đo được tỷ lệ câu có Điều đúng nằm trong 5 kết quả đầu (ngưỡng đạt chưa chốt — xem progress-tracker). Cách đo: recall@5, MRR@10, nDCG@10 trong `danh-gia.md`.
 3. **Đúng theo thời gian.** Hỏi "ngưỡng doanh thu miễn thuế của hộ kinh doanh năm 2025 và năm 2026" ra đúng 500 triệu và 1 tỷ.
-4. **Trong ngân sách.** Tổng chi phí ≤ 300.000đ/tháng; hết ngân sách thì app tự ngừng trả lời.
+4. **Chạy được trên laptop.** Model tự host trên RTX 3060 Laptop 6 GB (chốt 21/10/2026); câu hỏi của mẹ không ra khỏi máy. Thời gian trả lời đo được và hiện ở trang hiệu năng (ngưỡng chưa chốt).
 5. **Được dùng thật.** Mẹ dùng thật ít nhất 4 tuần.
 
 ## Luồng sử dụng chính
 
 1. Mẹ mở web app trên máy tính (hoặc điện thoại) qua mạng riêng — không cần đăng nhập ở giai đoạn đầu.
-2. Mẹ gõ câu hỏi. Dưới ô nhập có dòng nhắc: không nêu tên khách.
+2. Mẹ gõ câu hỏi. Dưới ô nhập có dòng nhắc: không nêu tên khách. Mẹ **hỏi nối tiếp** được trong cùng một cuộc hội thoại (chốt 21/10/2026), ví dụ hỏi ngưỡng năm 2025 rồi hỏi "thế còn 2026?": bot mang sang loại thuế, đối tượng, văn bản đang bàn từ lượt trước và chỉ thay phần câu mới nêu.
 3. Nếu câu hỏi nhắc tới một năm/ngày, hệ thống lấy đó làm **mốc thời gian**; không nhắc thì mốc là hôm nay.
-4. Hệ thống phân loại câu hỏi (loại thuế, mốc thời gian), tìm các Điều liên quan bằng cả từ khóa lẫn nghĩa, lọc theo hiệu lực tại mốc, xếp văn bản luật trước công văn.
-5. Claude viết câu trả lời từ các Điều tìm được.
+4. Hệ thống lấy mốc thời gian bằng quy tắc, phân loại câu hỏi (loại thuế, loại câu hỏi), tìm các Điều liên quan bằng cả từ khóa lẫn nghĩa, lọc theo hiệu lực tại mốc, xếp văn bản luật trước công văn.
+5. Model chạy trên laptop viết câu trả lời từ các Điều tìm được.
 6. Mọi trích dẫn trong câu trả lời được so với chữ đã lưu; trích dẫn không khớp bị bỏ.
 7. Mẹ đọc câu trả lời: từng bước lập luận, mỗi bước kèm căn cứ (tên văn bản, Điều/khoản/điểm, đoạn trích nguyên văn, link bản gốc) và nhãn bắt buộc.
-8. Mẹ xem lại các câu đã hỏi trong lịch sử, và xem chi phí tháng này ở trang chi phí.
+8. Mẹ xem lại các câu đã hỏi trong lịch sử.
 
 ## Tính năng
 
@@ -54,11 +54,10 @@ Chatbot tra cứu pháp luật thuế Việt Nam. Người dùng hỏi bằng ti
 - **Tính toán** hiện từng bước, mỗi bước kèm căn cứ, để mẹ kiểm lại được. Không đưa con số trần trụi.
 - **Đánh giá vi phạm** theo dạng *"nếu … thì …"*: nếu tình huống là A thì thuộc quy định X, mức phạt Y, cách xử lý Z. Mỗi cách xử lý và mỗi thời hạn có căn cứ riêng. Bot **không kết luận** khách đã vi phạm hay chưa — bot chịu trách nhiệm về căn cứ, mẹ chịu trách nhiệm xác định sự thật. Trình bày đủ mọi trường hợp, không tự chọn một.
 
-### Chi phí và vận hành
+### Vận hành
 
-- Tự cộng chi phí từ mỗi lần gọi API; hết ngân sách tháng thì ngừng trả lời; giới hạn số câu trong mỗi 5 tiếng.
-- Trang xem chi phí.
-- Tự động lấy văn bản và công văn mới mỗi tuần; cảnh báo khi cổng dữ liệu lỗi hoặc chi phí sắp hết.
+- Mỗi lần gọi model ghi token và thời gian chạy; **trang hiệu năng** cho thấy thời gian trả lời, số câu, bộ nhớ GPU (chốt 21/10/2026, thay trang chi phí — không còn trả tiền API).
+- Tự động lấy văn bản và công văn mới mỗi tuần; cảnh báo khi cổng dữ liệu lỗi.
 
 ## Phạm vi
 
@@ -88,6 +87,6 @@ Trước khi mở cho nhiều người dùng, phải đạt cả ba:
 
 1. Mẹ dùng thật ít nhất 4 tuần.
 2. Bộ câu hỏi kiểm tra (20 câu, lấy từ câu hỏi thật của mẹ) cho kết quả ổn định giữa các lần chạy.
-3. Chi phí thật nằm trong 300.000đ/tháng.
+3. Model tự host trên laptop trả lời trong thời gian chấp nhận được với mẹ (đo ở trang hiệu năng).
 
 Từng bước xây dựng có tiêu chí "Xong khi" riêng trong `ke-hoach.md`.

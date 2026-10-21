@@ -147,11 +147,16 @@ def check_save_and_read_back(conn: psycopg.Connection) -> None:
 
 def check_constraints_reject_bad_data(conn: psycopg.Connection) -> None:
     """Các CHECK phải thật sự cắn. Constraint không cắn là constraint không tồn tại."""
+    # Tự tạo văn bản tạm ngay trong câu lệnh: "select ... from documents limit 1" trên DB rỗng
+    # chèn 0 dòng, không vi phạm gì, và bài kiểm báo sai là constraint không cắn.
+    temp_document = """with d as (insert into documents (source, source_url, doc_group)
+                                  values ('selfcheck', 'x', 'VBQPPL') returning id)"""
     cases = [
         (
             "khoản không được có tên (Luật 64/2025 Điều 7 khoản 2)",
-            """insert into provisions (document_id, level, so, ten, ordinal, text, parsed_by)
-               select id, 'khoan', '1', 'tên sai', 1, 'x', 'markup' from documents limit 1""",
+            f"""{temp_document}
+               insert into provisions (document_id, level, so, ten, ordinal, text, parsed_by)
+               select id, 'khoan', '1', 'tên sai', 1, 'x', 'markup' from d""",
         ),
         (
             "text_origin chỉ nhận native|ocr|none (chữ OCR phải được đánh dấu)",
@@ -160,9 +165,10 @@ def check_constraints_reject_bad_data(conn: psycopg.Connection) -> None:
         ),
         (
             "amendments kiểu cum_tu phải có phrase_from/phrase_to",
-            """insert into amendments (target_document_id, target_kind, amending_ref_text,
+            f"""{temp_document}
+               insert into amendments (target_document_id, target_kind, amending_ref_text,
                                        footnote_text)
-               select id, 'cum_tu', 'ref', 'fn' from documents limit 1""",
+               select id, 'cum_tu', 'ref', 'fn' from d""",
         ),
     ]
     for label, sql in cases:
