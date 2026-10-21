@@ -16,8 +16,11 @@ from collections.abc import Callable
 
 import dagster as dg
 
+from app.ingest import check_sources as sources
+from app.ingest import discover_from_other_sources as other_sources
 from app.ingest import download_from_congbao as congbao
 from app.ingest import download_moj_documents as moj
+from app.ingest import link_consolidated_documents as consolidated
 from app.ingest import save_to_database as database
 from app.ingest.stage_report import StageReport
 
@@ -54,8 +57,59 @@ def _materialize(stage: Callable[[], StageReport], checks: Callable[[StageReport
     return dg.MaterializeResult(metadata=report.as_metadata(), check_results=checks(report))
 
 
+def _require_alive(source_name: str) -> None:
+    """source_health báo nguồn chết → dừng ngay với tên nguồn. allow_retries=False: RetryPolicy (10 rồi 20 phút)
+    không giúp gì vì source_health không chạy lại giữa chừng — lần chạy sau (tuần sau, hoặc bấm chạy lại) mới kiểm lại."""
+    if not sources.is_source_alive(source_name):
+        raise dg.Failure(description=f"[{source_name}] source_health báo nguồn chết — xem asset source_health",
+                         allow_retries=False)
+
+
+@dg.asset(
+    group_name="nguon",
+    description="Kiểm sống từng trang nguồn, kiểm cả NỘI DUNG trả về → data/raw/source_health.json.",
+    check_specs=[dg.AssetCheckSpec(f"nguon_{name}", asset="source_health",
+                                   description=f"{name}: {source.role}") for name, source in sources.SOURCES.items()],
+)
+def source_health() -> dg.MaterializeResult:
+    report, results = sources.check_sources()
+    checks = [
+        dg.AssetCheckResult(
+            check_name=f"nguon_{name}", passed=result["song"], severity=dg.AssetCheckSeverity.WARN,
+            metadata={"chi_tiet": result["chi_tiet"], "thoi_gian_ms": result["thoi_gian_ms"],
+                      "kiem_luc": result["kiem_luc"], **({"url": result["url"]} if result.get("url") else {})},
+        )
+        for name, result in results.items()
+    ]
+    table = "\n".join(f"{'SỐNG' if r['song'] else 'CHẾT'}  {n} — {r['chi_tiet']}" for n, r in results.items())
+    return dg.MaterializeResult(metadata={**report.as_metadata(), "trang_thai_nguon": table}, check_results=checks)
+
+
+@dg.asset(
+    group_name="nguon",
+    deps=[source_health],
+    description="RSS congbao + docid mới của vanban.chinhphu.vn → văn bản thuế; tải bản gốc văn bản Bộ Tư pháp chưa có. "
+                "Không phụ thuộc nhánh Bộ Tư pháp.",
+    check_specs=[
+        _failure_check_spec("other_source_documents", MAX_FAILURE_SHARE_DOWNLOAD, blocking=False),
+        dg.AssetCheckSpec("rss_congbao_co_the_sot", asset="other_source_documents",
+                          description="RSS congbao chỉ giữ 50 mục — cả 50 đều mới hơn lần chạy trước thì có thể đã sót."),
+    ],
+)
+def other_source_documents() -> dg.MaterializeResult:
+    report, not_on_moj = other_sources.discover_from_other_sources()
+    checks = [
+        _failure_share_check(report, MAX_FAILURE_SHARE_DOWNLOAD, blocking_severity=False),
+        dg.AssetCheckResult(check_name="rss_congbao_co_the_sot", passed=report.counts["rss_congbao_co_the_sot"] == 0,
+                            severity=dg.AssetCheckSeverity.WARN),
+    ]
+    metadata = {**report.as_metadata(), "chua_co_tren_bo_tu_phap": "\n".join(not_on_moj) or "không có"}
+    return dg.MaterializeResult(metadata=metadata, check_results=checks)
+
+
 @dg.asset(
     group_name="bo_tu_phap",
+    deps=[source_health],
     retry_policy=SOURCE_RETRY,
     description="Đọc sitemap vbpl.vn → data/raw/moj/sitemap.tsv (chỉ thêm, không xoá).",
     check_specs=[
@@ -66,6 +120,8 @@ def _materialize(stage: Callable[[], StageReport], checks: Callable[[StageReport
     ],
 )
 def moj_document_list() -> dg.MaterializeResult:
+    _require_alive("vbpl_sitemap")
+
     def checks(report: StageReport) -> list[dg.AssetCheckResult]:
         found, known = report.counts["ung_vien_trong_sitemap"], report.counts["tong_trong_danh_sach"]
         return [
@@ -85,6 +141,7 @@ def moj_document_list() -> dg.MaterializeResult:
     check_specs=[_failure_check_spec("moj_documents", MAX_FAILURE_SHARE_DOWNLOAD, blocking=True)],
 )
 def moj_documents() -> dg.MaterializeResult:
+    _require_alive("moj_gateway")
     return _materialize(moj.download_documents,
                         lambda r: [_failure_share_check(r, MAX_FAILURE_SHARE_DOWNLOAD)])
 
@@ -124,6 +181,24 @@ def database_documents() -> dg.MaterializeResult:
                         lambda r: [_failure_share_check(r, MAX_FAILURE_SHARE_DATABASE)])
 
 
+@dg.asset(
+    group_name="database",
+    deps=[database_documents],
+    description="Nối văn bản hợp nhất với văn bản gốc (hop_nhat, sua_doi) và kiểm JSON có đúng văn bản không.",
+    check_specs=[
+        dg.AssetCheckSpec("json_dung_van_ban", asset="consolidated_links",
+                          description="Số hiệu ở đầu chữ khớp số hiệu của văn bản; văn bản lệch không bao giờ được dùng làm căn cứ."),
+    ],
+)
+def consolidated_links() -> dg.MaterializeResult:
+    def checks(report: StageReport) -> list[dg.AssetCheckResult]:
+        # Lỗi trong báo cáo này là văn bản có JSON lệch — liệt kê để người xem tự đối chiếu với bản gốc.
+        return [dg.AssetCheckResult(check_name="json_dung_van_ban", passed=report.counts["json_lech_van_ban"] == 0,
+                                    severity=dg.AssetCheckSeverity.WARN,
+                                    metadata={"so_van_ban_lech": report.counts["json_lech_van_ban"]})]
+    return _materialize(consolidated.link_consolidated_documents, checks)
+
+
 # Chạy tuần tự trong một tiến trình: các công đoạn cùng gọi một máy chủ thì không chạy song song,
 # giữ đúng nhịp FETCH_DELAY_SECONDS; log cũng dễ đọc hơn.
 update_all_data = dg.define_asset_job(
@@ -144,7 +219,9 @@ weekly_update = dg.ScheduleDefinition(
 )
 
 defs = dg.Definitions(
-    assets=[moj_document_list, moj_documents, moj_attachments, congbao_documents, database_documents],
+    assets=[source_health, other_source_documents,
+            moj_document_list, moj_documents, moj_attachments, congbao_documents, database_documents,
+            consolidated_links],
     jobs=[update_all_data],
     schedules=[weekly_update],
 )

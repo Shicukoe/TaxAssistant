@@ -16,6 +16,7 @@ Cập nhật: 15/10/2026. Muốn đổi một lựa chọn ở đây thì sửa 
 | OCR | **Tesseract**, gói tiếng Việt `vie` (chốt 13/10/2026) | Nhẹ, chạy bằng CPU. Unlimited-OCR (~6,7 GB) không vừa GPU 6 GB. Độ chính xác đo theo `danh-gia.md` |
 | Model AI | **Tự host trên laptop** (chốt 21/10/2026): **Qwen3.5-4B** bản GGUF lượng tử 4-bit (`Q4_K_M`, file 2,74 GB) — ĐỀ XUẤT, chốt sau khi đo — viết câu trả lời và tạm thời phân loại câu hỏi. **Mốc thời gian lấy bằng quy tắc, không dùng model** (chốt 18/10/2026). Không dùng Claude API trong app | Học tự host, câu hỏi của mẹ không ra khỏi máy. Bản 9B không vừa 6 GB VRAM |
 | Chạy model | **llama.cpp `llama-server`** (chốt 21/10/2026), bản dựng sẵn Windows CUDA 12.4 (khớp driver 552.44) | API kiểu OpenAI, ép đầu ra theo JSON schema; mọi tham số (context, số lớp lên GPU, KV cache) là cờ lệnh rõ ràng. File model để ở ổ D |
+| Kiểm câu trả lời có căn cứ ủng hộ | Cách làm của **AlignScore** với model NLI đa ngôn ngữ `mDeBERTa-v3-base-xnli-multilingual-nli-2mil7`, chạy **CPU** (chốt 22/10/2026) | Bắt "suy luận sai": trích đúng chữ nhưng áp sai đối tượng. AlignScore gốc chỉ có bản tiếng Anh. Chi tiết: `danh-gia.md` guardrail g |
 | Giám khảo bộ đo | **Claude** (chốt 21/10/2026), **chỉ** dùng khi chạy bộ đo, không dùng trong app | Model viết câu trả lời không tự chấm mình. Điểm của Claude không bao giờ làm dữ liệu huấn luyện (quy tắc số 13) |
 | Cấu hình | **python-dotenv**, file `.env` | Bí mật không nằm trong code |
 | Điều phối luồng trả lời | **LangGraph** (chốt 21/10/2026): `StateGraph`, checkpointer Postgres (`langgraph-checkpoint-postgres`), `stream_mode` để gửi tiến độ và từng token lên giao diện, `RetryPolicy` cho lỗi kết nối, `TimeoutPolicy` | Có sẵn lưu trạng thái cho hội thoại nhiều lượt, xem lại state sau từng bước, chạy lại từ một bước. Không dùng agent dựng sẵn, Deep Agents, LangSmith, vector store của LangChain |
@@ -32,23 +33,38 @@ Cập nhật: 15/10/2026. Muốn đổi một lựa chọn ở đây thì sửa 
   - `split_articles.py` — HTML → Điều / khoản / điểm kèm vị trí ký tự. Không đọc mạng, không ghi DB
   - `save_to_database.py` — bản lưu trên đĩa → database
   - `stage_report.py` — báo cáo của một công đoạn: đếm kết quả, danh sách lỗi từng văn bản
+  - `check_sources.py` — bảng nguồn (tên, vai trò, ghi nguồn) + kiểm sống từng trang **kèm kiểm nội dung** → `data/raw/source_health.json`; tên nguồn theo địa chỉ cho log lỗi
+  - `discover_from_other_sources.py` — RSS congbao + docid mới của vanban.chinhphu.vn → văn bản thuế → đối chiếu Bộ Tư pháp → tải bản gốc văn bản Bộ Tư pháp chưa có
+  - `link_consolidated_documents.py` — đọc đoạn mở đầu (hoặc tiêu đề) của văn bản hợp nhất → quan hệ `hop_nhat` (bản hợp nhất → văn bản gốc) và `sua_doi` (văn bản sửa → văn bản gốc); kiểm "JSON có đúng văn bản không" → `documents.content_matches_number`
 - `app/pipeline/` — nối các công đoạn của `app/ingest/` thành pipeline Dagster (`definitions.py`). Chỉ gọi hàm có sẵn, không chứa logic tải hay tách văn bản.
 - `dagster_home/` — nơi Dagster lưu lịch sử chạy và log (không commit, trừ `dagster.yaml`).
 - `scripts/run_pipeline.sh` — chạy pipeline một lần, hoặc mở Dagster (`ui`): giao diện web + bộ hẹn giờ chạy hằng tuần. Bash: Git Bash trên Windows, Linux trên VPS. Giải thích Dagster và cách xem lỗi: `pipeline-du-lieu.md`.
-- `data/raw/` — bản gốc tải về (không commit). Chỉ thêm, không sửa: bản bị cổng sửa thì bản cũ chuyển vào `data/raw/moj/history/{id}/{ngày}.json`.
+- `data/raw/` — bản gốc tải về (không commit). Mỗi nguồn một thư mục: `moj/`, `congbao/` (bù cho văn bản Bộ Tư pháp thiếu chữ, theo mã Bộ Tư pháp), `congbao/new/` (văn bản mới phát hiện qua RSS, theo mã congbao), `vanban_chinhphu/` (theo docid). `source_health.json` — kết quả kiểm sống gần nhất. Chỉ thêm, không sửa: bản bị cổng sửa thì bản cũ chuyển vào `data/raw/moj/history/{id}/{ngày}.json`.
 - `docs/` — tài liệu thiết kế.
+
+- `app/answer/` — luồng trả lời (LangGraph). **Bản demo tối thiểu** từ 22/10/2026: tìm kiếm mới là full-text thô, chưa có embedding, reranker, lịch sử sửa đổi.
+  - `call_local_model.py` — **chỗ duy nhất gọi model** (`llama-server`), trả token và thời gian chạy
+  - `understand_question.py` — mốc thời gian (quy tắc), loại thuế và loại câu hỏi (quy tắc từ khoá + model, T=0), mang ô từ lượt trước sang
+  - `search_articles.py` — tìm Điều bằng full-text, lọc theo hiệu lực tại mốc (không lọc cứng "còn hiệu lực")
+  - `write_answer.py` — model viết câu trả lời theo JSON schema (kết luận + căn cứ trích nguyên văn)
+  - `check_citations.py` — guardrail tất định: trích dẫn khớp từng chữ, chữ OCR không trích, con số có căn cứ
+  - `check_claim_support.py` — guardrail g: mỗi câu kết luận có được khoản chứa trích dẫn ủng hộ không (cách AlignScore, model NLI đa ngôn ngữ chạy CPU)
+  - `answer_graph.py` — nối các bước bằng LangGraph + checkpointer Postgres; bước cuối ghi `questions`, `answers`, `usage_log`
+  - `chat_in_terminal.py` — demo: chat trong terminal, in state sau từng bước để debug
+- `scripts/chat_demo.sh` — chạy demo chat (cần `run_model_server.sh` đang chạy)
 
 Dự kiến, **chưa có** (đặt tên khi tới bước tương ứng):
 
-- thư mục tìm kiếm (bước Tìm kiếm) — đọc DB, không gọi model viết câu trả lời
-- thư mục trả lời (bước Trả lời) — **chỗ duy nhất gọi model AI**, kiểm trích dẫn, ghi token và thời gian chạy
+- thư mục tìm kiếm đầy đủ (bước Tìm kiếm) — thay `search_articles.py`: tìm kết hợp, embedding, reranker
+- web app (bước Giao diện)
 - thư mục web (bước Giao diện) — FastAPI + template; không chứa logic tìm kiếm hay gọi model trực tiếp
 
 ## Lưu trữ
 
 - **PostgreSQL** (database `taxassistant`): 10 bảng, mỗi bảng có chú thích lý do trong `app/db/migrations/001_create_tables.sql`.
   - `documents` — một văn bản: số hiệu, loại, ngày, hiệu lực, nguồn, link gốc, `text_origin` (`native` / `ocr` / `none`)
-  - `document_relations` — văn bản này sửa / thay thế / hướng dẫn văn bản kia
+  - `document_relations` — văn bản này sửa / thay thế / hướng dẫn văn bản kia. Từ 22/10/2026 có `hop_nhat` và `sua_doi` đọc từ văn bản hợp nhất (`evidence` = `vbhn_preamble` / `vbhn_title`)
+  - `documents.content_matches_number` (migration 004) — số hiệu ở đầu chữ văn bản có khớp số hiệu của văn bản không: `false` = JSON chứa văn bản khác (ví dụ NĐ 125/2020 chứa công văn đính chính) → **không bao giờ dùng làm căn cứ**; `null` = đầu văn bản không ghi số, không kiểm được
   - `provisions` — từng Điều / khoản / điểm
   - `chunks` — đoạn dùng để tìm kiếm: một Điều trọn vẹn
   - `chunk_positions` — vị trí ký tự của từng khoản/điểm trong đoạn → dùng để kiểm trích dẫn
@@ -56,7 +72,7 @@ Dự kiến, **chưa có** (đặt tên khi tới bước tương ứng):
   - `embeddings` — vector của từng đoạn
   - `questions`, `answers` — lịch sử hỏi đáp, **bản ghi chính thức** (lịch sử của mẹ, bộ đo, trang hiệu năng chỉ đọc ở đây). `questions` sẽ có `thread_id` nối sang checkpoint (migration khi viết bước Trả lời)
   - bảng checkpoint của LangGraph (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`, do `.setup()` tạo) — **trạng thái lúc chạy**, gồm cả bản nháp trước guardrail. Không hiển thị câu trả lời từ đây. Giá trị đơn giản (mốc thời gian, loại thuế) đọc được bằng JSONB; list/dict nằm ở `checkpoint_blobs` (msgpack), đọc bằng `get_state_history`
-  - `usage_log` — token, thời gian chạy (và chi phí, với lời gọi giám khảo Claude) của từng lần gọi model
+  - `usage_log` — token, thời gian chạy (`duration_ms`, migration 003) và chi phí (0 với model trên máy; có giá với lời gọi giám khảo Claude) của từng lần gọi model
 - **Đĩa** (`data/raw/`, không commit): JSON gốc của cổng Bộ Tư pháp, file PDF/DOC/RTF đính kèm, file tải từ congbao. Database có thể dựng lại hoàn toàn từ đây.
   - Cổng Bộ Tư pháp **có sửa văn bản sau khi đăng**: đo 15/10/2026, 4/20 văn bản còn hiệu lực đổi nội dung sau 13 ngày. Vì vậy mỗi lần chạy tải lại văn bản còn hiệu lực; khác thì giữ bản cũ trong `history/`.
   - Mỗi dòng `documents` ghi `raw_sha256` (bản gốc nào) và `parser_version` (bộ tách nào) → chỉ nạp lại văn bản thật sự thay đổi, và truy được dữ liệu sinh từ đâu.
@@ -103,6 +119,7 @@ Văn bản không có Điều (thông tư cũ chia theo Phần / Mục / I. / 1.
 - **Hội thoại nhiều lượt** (chốt 21/10/2026): mỗi cuộc hội thoại là một `thread_id`. Lượt sau mang sang các **ô có cấu trúc** của lượt trước (loại thuế, đối tượng, văn bản đang bàn, mốc thời gian) và chỉ thay ô mà câu mới nêu — mốc thời gian vẫn đọc bằng quy tắc. Không đưa cả lịch sử hội thoại vào model (ngữ cảnh 4B có hạn).
 - **Quy tắc dùng LangGraph:** (1) `answers` là bản ghi chính thức, checkpoint chỉ là trạng thái lúc chạy; (2) `questions.thread_id` nối hai nơi; (3) `durability="async"` — ghi checkpoint song song với bước sau, không chặn luồng; (4) luôn đặt `LANGGRAPH_STRICT_MSGPACK=true` (README của checkpointer cảnh báo đọc lại checkpoint có thể bị lợi dụng chạy code); (5) ghim phiên bản LangGraph trong `pyproject.toml`; (6) xoá lịch sử của mẹ phải xoá cả hai nơi. Kết nối của checkpointer phải có `autocommit=True` và `row_factory=dict_row` (theo README).
 - **Các bước:** lấy mốc thời gian bằng quy tắc + model trên máy phân loại loại thuế, loại câu hỏi (ép JSON schema) → tìm kiếm kết hợp → lọc theo hiệu lực tại mốc, xếp văn bản luật trước công văn → xếp lại bằng model chạy trên máy (ĐỀ XUẤT: cross-encoder như bge-reranker-v2-m3 — chọn ở bước Tìm kiếm) → model trên máy viết câu trả lời → kiểm từng trích dẫn với `chunk_positions`.
+- **Ưu tiên văn bản hợp nhất** (chốt 22/10/2026 — văn bản hợp nhất thường đầy đủ hơn văn bản riêng lẻ): tại mốc hỏi, văn bản gốc đã có bản hợp nhất có chữ thì tìm trên bản hợp nhất mới nhất ban hành **không sau** mốc hỏi; ẩn văn bản gốc và các bản hợp nhất cũ hơn. Bản hợp nhất ban hành sau mốc hỏi không dùng — nó gộp cả sửa đổi đến sau.
 - **Embedding chạy trên máy**, không qua API.
 - **Hiểu câu hỏi** (chốt 18/10/2026):
   - **Mốc thời gian:** quy tắc (regex) trên các mẫu câu như "năm 2025", "trước 1/7/2025", "hiện nay". Không đọc được thì dùng hôm nay và ghi rõ. Mỗi mẫu câu có test.

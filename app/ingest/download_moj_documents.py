@@ -118,7 +118,11 @@ def document_fingerprint(body: bytes) -> str:
 
 
 def http_request(url: str, data: bytes | None = None, content_type: str | None = None) -> bytes:
-    """GET (hoặc POST khi có data). Lỗi mạng tạm thời và 429/5xx được thử lại."""
+    """GET (hoặc POST khi có data). Lỗi mạng tạm thời và 429/5xx được thử lại.
+    Log mở đầu bằng [tên nguồn] để biết trang nào hỏng (docs/code-standards.md)."""
+    from app.ingest.check_sources import source_name_for_url  # import muộn: check_sources cũng dùng hàm này
+
+    source = source_name_for_url(url)
     headers = {"User-Agent": config.FETCH_USER_AGENT}
     if content_type:
         headers["Content-Type"] = content_type
@@ -129,13 +133,16 @@ def http_request(url: str, data: bytes | None = None, content_type: str | None =
                 return response.read()
         except urllib.error.HTTPError as e:
             if e.code not in RETRYABLE_HTTP_CODES or attempt == len(RETRY_WAIT_SECONDS):
+                if e.code != 404:  # 404 là "không có file" — bình thường, bộ tải tự ghi vào missing.txt
+                    log.warning("[%s] HTTP %s sau %d lần thử: %s", source, e.code, attempt + 1, url)
                 raise
             reason = f"HTTP {e.code}"
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             if attempt == len(RETRY_WAIT_SECONDS):
+                log.warning("[%s] %s sau %d lần thử: %s", source, type(e).__name__, attempt + 1, url)
                 raise
             reason = f"{type(e).__name__}: {e}"
-        log.info("thử lại sau %ss (%s): %s", RETRY_WAIT_SECONDS[attempt], reason, url)
+        log.info("[%s] thử lại sau %ss (%s): %s", source, RETRY_WAIT_SECONDS[attempt], reason, url)
         time.sleep(RETRY_WAIT_SECONDS[attempt])
     raise AssertionError("không tới được đây")
 
@@ -189,6 +196,7 @@ def download_and_save(
     missing_file: Path | None = None,
     fingerprint: Callable[[bytes], str] | None = None,
     delay_seconds: float | None = None,
+    source: str = "?",
 ) -> None:
     """Tải từng (nơi lưu, hàm tải, nhãn), cách nhau FETCH_DELAY_SECONDS. Dùng chung cho mọi bộ tải.
 
@@ -223,11 +231,11 @@ def download_and_save(
                 with missing_file.open("a", encoding="utf-8") as f:
                     f.write(label + "\n")
         except Exception as e:  # mạng, JSON hỏng, cổng báo lỗi — ghi lại rồi đi tiếp
-            report.fail(label, e, log)
+            report.fail(f"[{source}] {label}", e, log)
             failures_in_a_row += 1
             if failures_in_a_row >= MAX_CONSECUTIVE_FAILURES:
                 raise SourceUnavailableError(
-                    f"{failures_in_a_row} lỗi liên tiếp — nguồn có thể đang tắt hoặc chặn. "
+                    f"[{source}] {failures_in_a_row} lỗi liên tiếp — nguồn có thể đang tắt hoặc chặn. "
                     f"Đã làm được: {report.summary()}"
                 ) from e
         if n % 100 == 0:
@@ -268,7 +276,7 @@ def update_document_list() -> StageReport:
     try:
         index = http_get(SITEMAP_INDEX_URL).decode()
     except Exception as e:
-        raise SourceUnavailableError(f"không đọc được {SITEMAP_INDEX_URL}: {e}") from e
+        raise SourceUnavailableError(f"[vbpl_sitemap] không đọc được {SITEMAP_INDEX_URL}: {e}") from e
     numbers = [n for n in re.findall(r"https://vbpl\.vn/sitemap/(\d+)\.xml", index)
                if int(n) in CENTRAL_GOVERNMENT_SITEMAPS]
     found: dict[str, str] = {}
@@ -286,7 +294,7 @@ def update_document_list() -> StageReport:
                 found.setdefault(doc_id, url)
         log.info("sitemap %s.xml: %d ứng viên", n, len(found))
     if report.failure_count == len(numbers):
-        raise SourceUnavailableError("không đọc được sitemap nào")
+        raise SourceUnavailableError("[vbpl_sitemap] không đọc được sitemap con nào")
 
     known = read_source_urls()
     report.count("ung_vien_trong_sitemap", len(found))
@@ -311,6 +319,7 @@ def download_documents() -> StageReport:
         [(MOJ_RAW_DIR / f"{i}.json", lambda i=i: fetch_document_json(i), i) for i in new_ids + refresh_ids],
         report,
         fingerprint=document_fingerprint,
+        source="moj_gateway",
     )
     log.info(report.summary())
     return report
@@ -335,6 +344,7 @@ def download_attachments() -> StageReport:
         [(path, lambda i=i, n=n: fetch_attachment(i, n), f"{i}/{n}") for path, i, n in to_download],
         report,
         missing_file=MISSING_ATTACHMENTS_FILE,
+        source="moj_gateway",
     )
     log.info(report.summary())
     return report

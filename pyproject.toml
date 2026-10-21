@@ -11,10 +11,24 @@ dependencies = [
 [project.optional-dependencies]
 # cần từ bước "Lấy văn bản luật về"
 ingest = ["httpx>=0.27", "lxml>=5.2", "pypdf>=5.0"]
-# cần từ bước "Trả lời"
 # điều phối pipeline dữ liệu (app/pipeline)
 pipeline = ["dagster>=1.13,<1.14", "dagster-webserver>=1.13,<1.14"]
-answer = ["anthropic>=0.40", "fastapi>=0.115", "uvicorn[standard]>=0.30", "jinja2>=3.1"]
+# luồng trả lời (app/answer). LangGraph ghim đúng phiên bản: thư viện đổi nhanh, checkpoint lưu dạng đóng gói.
+answer = [
+    "langgraph==1.2.16",
+    "langgraph-checkpoint-postgres==3.2.0",
+    "httpx>=0.28,<0.29",
+    # guardrail g (kiểm câu kết luận có được căn cứ ủng hộ — cách AlignScore, model NLI chạy CPU).
+    # torch trên PyPI cho Windows là bản CPU.
+    "transformers==5.20.2",
+    "torch==2.14.1",
+    "sentencepiece==0.2.2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "jinja2>=3.1",
+]
+# bộ đo (giám khảo Claude) — không bao giờ dùng trong app
+eval = ["anthropic>=0.40"]
 
 # Chỉ app/ là code. Không có dòng này, setuptools thấy thư mục data/ (văn bản tải về)
 # và từ chối cài.

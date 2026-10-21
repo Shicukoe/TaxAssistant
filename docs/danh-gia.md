@@ -18,6 +18,11 @@ Chỉ số lấy từ nghiên cứu đã công bố (danh mục cuối file). Ch
 5. **Model viết câu trả lời không được tự chấm mình** — LLM giám khảo có thiên lệch tự khen, thiên lệch vị trí, thiên lệch thích câu dài [Zheng].
 6. **Giám khảo là Claude, chỉ trong bộ đo** (chốt 21/10/2026). Tốn tiền API, nên chỉ chạy bộ đo khi có thay đổi, không chạy cho từng câu hỏi thật. Điểm chấm của Claude **không bao giờ** làm dữ liệu huấn luyện (quy tắc bất biến số 13 trong `architecture.md`).
 7. **Kết quả mỗi lần đo được lưu lại** (ngày, phiên bản, con số) để so với lần trước.
+8. **Ba tập dữ liệu tách rời** (chốt 22/10/2026):
+   - **Huấn luyện** — dữ liệu để fine-tune (nhãn từ quy tắc, câu hỏi do model mở sinh, câu mẹ sửa).
+   - **Kiểm định (validation)** — câu hỏi thật có nhãn của mẹ, dùng để **chỉnh**: khớp temperature scaling cho classifier, chọn ngưỡng độ tin, chọn temperature sinh câu trả lời, so prompt.
+   - **Bộ đo (test)** — câu hỏi thật có nhãn của mẹ, **không bao giờ dùng để chỉnh**, chỉ chạy để báo số. Chỉnh trên bộ đo thì con số đẹp giả.
+   Một câu hỏi chỉ nằm ở một tập; câu hỏi gần giống nhau (cùng ý, đổi vài chữ) cũng phải cùng tập. Tỷ lệ chia: chưa chốt — tuỳ số câu mẹ gom được.
 
 ---
 
@@ -72,7 +77,18 @@ Không dùng model (biểu thức chính quy), nhưng sai ở đây làm hỏng 
 | **MRR@10** | Trung bình của 1 ÷ (thứ hạng của Điều đúng đầu tiên), tính trong 10 kết quả đầu | Chỉ số tìm kiếm chuẩn |
 | **nDCG@10** | Tính cả thứ hạng lẫn mức độ liên quan có cấp bậc | BEIR chọn làm chỉ số chính vì "cân bằng tốt cho cả đánh giá liên quan nhị phân lẫn có cấp bậc", còn precision/recall không tính thứ hạng [BEIR] |
 
-**Dữ liệu đo:** câu hỏi thật của mẹ, mỗi câu gắn nhãn các Điều đúng (Điều chính = mức 2, Điều liên quan = mức 1 cho nDCG). Đo riêng: chỉ từ khóa, chỉ embedding, kết hợp — để thấy mỗi phần đóng góp gì.
+**Dữ liệu đo:** câu hỏi thật của mẹ, mỗi câu gắn nhãn các Điều đúng (Điều chính = mức 2, Điều liên quan = mức 1 cho nDCG).
+
+**Model embedding ứng viên** (kiểm HuggingFace 22/10/2026 — chất lượng trên câu hỏi thuế **chưa đo**):
+
+| Model | Giấy phép | Ghi chú |
+|---|---|---|
+| BGE-M3 | MIT | Đa ngôn ngữ, 8.192 token — Điều dài vẫn vừa |
+| Qwen3-Embedding-0.6B | Apache-2.0 | Đa ngôn ngữ |
+| bkai-foundation-models/vietnamese-bi-encoder | Apache-2.0 (ghi trên model card) | Nền PhoBERT-base-v2, huấn luyện thêm 80% dữ liệu Legal Text Retrieval Zalo 2021; trên 20% còn lại: Acc@10 93,59, MRR@10 80,73 (model card tự báo). **Cần tách từ trước**; PhoBERT tối đa 256 token — Điều dài bị cắt. Nền PhoBERT-base-v2 mang giấy phép **AGPL-3.0** — giấy phép của bản phái sinh cần xem lại |
+| truro7/vn-law-embedding | Apache-2.0 | Nền halong_embedding, huấn luyện trên bộ câu hỏi luật Việt Nam; ít người dùng |
+
+**LEGAL-BERT** (Chalkidis và cộng sự, Findings of EMNLP 2020) **không dùng được**: huấn luyện trên 12 GB văn bản luật **tiếng Anh** (EU, Anh, Mỹ). Bản đa ngôn ngữ MultiLegalPile (Niklaus và cộng sự, ACL 2024) gồm 24 ngôn ngữ châu Âu, **không có tiếng Việt**. Đo riêng: chỉ từ khóa, chỉ embedding, kết hợp — để thấy mỗi phần đóng góp gì.
 
 **Làm ở bước:** Tìm kiếm (bước 4) — cũng là cách chọn model embedding.
 
@@ -120,7 +136,11 @@ Model ứng viên (kiểm trên HuggingFace 18/10/2026):
 
 **Quy trình:** lưu kết quả tạm thời + phản hồi của mẹ → đủ vài trăm câu có nhãn → đo mốc so → fine-tune mmBERT-small và BamiBERT, PhoBERT-base làm mốc → so với cách tạm thời trên cùng bộ đo → ngang hoặc hơn thì thay. Fine-tune trên GPU 6 GB với model cỡ base, câu ngắn, fp16: thường vừa, **chưa đo**.
 
-**Khi chạy:** mỗi câu hỏi ghi tên + phiên bản model, nhãn, xác suất. Xác suất dưới ngưỡng → không ưu tiên loại thuế nào và gắn cờ để xem lại (ngưỡng đặt sau mốc gốc).
+**Khi chạy:** mỗi câu hỏi ghi tên + phiên bản model, nhãn, xác suất. Xác suất dưới ngưỡng → không ưu tiên loại thuế nào và gắn cờ để xem lại (ngưỡng đặt sau mốc gốc, trên tập kiểm định).
+
+**Hiệu chỉnh xác suất (calibration):** classifier encoder không có bước lấy mẫu — nhãn là giá trị xác suất cao nhất, luôn tất định. Nhưng xác suất của mạng nơ-ron hiện đại thường **quá tự tin** [Guo]. Dùng **temperature scaling**: chia logit cho một hệ số T khớp trên **tập kiểm định** (không đổi nhãn dự đoán, chỉ làm xác suất phản ánh đúng độ tin). Đo bằng **ECE** (expected calibration error) [Guo] trên bộ đo.
+
+**Cách tạm thời (Qwen, ép JSON):** temperature **0** (chốt 22/10/2026) — đầu ra ngắn, bị schema ép, không có rủi ro lặp vô tận; đo 22/10: 3 câu × 3 lần lặp lại giống hệt. Ổn định nhưng **sai có hệ thống** (câu nào cũng ra TNCN/TNDN, bỏ sót hộ kinh doanh, hoá đơn, vi phạm) → bổ sung **quy tắc từ khoá tất định** cho nhãn rõ ràng và loại nhãn trùng bằng code.
 
 Thư viện cần thêm (`transformers`, `torch`, có thể `onnxruntime`) chỉ thêm khi tới bước này, nằm trong nhóm phụ thuộc riêng, và phải được người dùng đồng ý.
 
@@ -152,6 +172,12 @@ Thư viện cần thêm (`transformers`, `torch`, có thể `onnxruntime`) chỉ
 | d | Không có đoạn nào tìm được → trả lời "không có căn cứ trích dẫn" | Không gọi model viết câu trả lời có trích dẫn |
 | e | Nhãn hết hiệu lực, công văn, OCR gắn theo dữ liệu, không theo lời model | — |
 | f | `llama-server` không trả lời trong thời gian chờ, hoặc hết bộ nhớ GPU | Báo lỗi rõ cho mẹ, không trả câu trả lời dở |
+| g | **Mỗi câu trong kết luận phải được căn cứ ủng hộ** (chốt 22/10/2026) — kiểm theo cách AlignScore [AlignScore]: ngữ cảnh = chữ của các khoản chứa trích dẫn đã qua kiểm (a), cắt đoạn ~350 token; mỗi câu kết luận lấy xác suất `entailment` cao nhất trên các đoạn; điểm cả câu trả lời = trung bình. Bắt loại lỗi "suy luận sai" mà (a) không bắt được — ví dụ trích đúng nguyên văn định mức rượu của thuyền viên nhưng kết luận cho hành khách | Gắn cờ câu dưới ngưỡng ("câu chưa được căn cứ ủng hộ"), không xoá câu trả lời. Ngưỡng **tạm 0,5** — đặt lại trên tập kiểm định |
+
+**Model cho guardrail g:** AlignScore chỉ có bản nền RoBERTa **tiếng Anh** (README: "we only provide the metric trained on RoBERTa") → dùng cùng cách làm với model NLI đa ngôn ngữ `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` [mDeBERTa-NLI] (MIT; nhãn theo thứ tự entailment / neutral / contradiction; độ chính xác XNLI tiếng Việt 0,793 theo model card; dữ liệu huấn luyện dịch máy, NLI tổng quát — trên văn bản luật tiếng Việt **chưa đo**). NLI là một trong 7 nhiệm vụ nền của AlignScore. Chạy trên **CPU** — không tranh VRAM với `llama-server`.
+
+**Đo đầu tiên (22/10/2026) — chưa tin được, đang chạy chế độ đo:** câu SAI đối tượng ("hành khách được mua 1,5 lít rượu", ngữ cảnh là khoản 4 về thuyền viên) được **0,780** điểm ủng hộ; câu ĐÚNG trong luồng thật ("hồ sơ khai thuế theo quý … ngày cuối cùng của tháng đầu quý sau", khoản 3 Điều 10 NĐ 252/2026) được **0,806** — hai khoảng điểm chồng nhau, không ngưỡng nào tách được. Khi ngữ cảnh là đúng khoản (khoản 2, hành khách) thì tách rõ: câu đúng 0,969, câu sai ≤ 0,004. Model NLI tổng quát (dịch máy) bỏ qua việc **sai đối tượng** khi số lượng trùng. Vì vậy `NLI_WARNINGS_VISIBLE=false`: luôn chấm và lưu điểm, chưa hiện cảnh báo cho người dùng. Bật khi đã đo trên tập kiểm định có nhãn "câu này được căn cứ ủng hộ không" và có ngưỡng tách được. Hướng thử nếu vẫn chồng điểm: model NLI lớn hơn, hoặc fine-tune NLI trên cặp (khoản, câu) có nhãn của mẹ.
+**Tốc độ trên CPU:** nạp model ~9 giây (nạp sẵn lúc khởi động); ~2,3 giây mỗi cặp (câu, đoạn). Hướng tăng tốc chưa đo: ONNX Runtime (repo model có sẵn bản ONNX), hoặc chạy GPU (cần bản torch CUDA, ~0,6 GB VRAM).
 
 ### Phân loại lỗi khi câu trả lời sai
 
@@ -166,7 +192,21 @@ Mỗi câu hỏi lưu kết quả trung gian của từng bước (mốc thời 
 
 Báo cáo của mỗi lần đo gồm số câu sai theo từng loại, để biết sửa chỗ nào trước.
 
+### Thông số lấy mẫu khi viết câu trả lời
+
+Chốt 22/10/2026: **temperature 0.4, top_p 0.8, top_k 20, seed cố định, tắt phạt lặp, giới hạn `max_tokens`**.
+
+- Hỏi đáp trên tài liệu, 35 model mở gồm Qwen3 4B/8B, T = 0 / 0.4 / 0.7 / 1.0 [Roig]: T=0 chính xác nhất ở 60% trường hợp nhưng chênh lệch trung vị chỉ ~2 điểm % (ngữ cảnh 32K); T cao hơn giảm bịa ở 53% trường hợp; T=0 tăng mạnh **lặp vô tận** (Llama 3.1 8B, 128K: 14,05% ở T=0 so với 2,05% ở T=1.0). Khuyến nghị: "a moderate temperature (T=0.4 or T=0.7) often provides the best balance".
+- Trắc nghiệm, 9 model: T 0.0–1.0 không ảnh hưởng có ý nghĩa thống kê [Renze].
+- Bộ đo luật dùng T=0 **để lặp lại được**, không phải vì tối ưu [LegalBench]; model vẫn bịa luật ở T=0 [Dahl]. Chưa tìm thấy nghiên cứu y khoa đo riêng ảnh hưởng của temperature lên trích dẫn.
+- `top_p`/`top_k` theo model card Qwen3.5 (chế độ không suy luận). Model card gợi ý thêm `presence_penalty` 1.5 — **không dùng**: phạt lặp có thể đổi chữ trong đoạn trích (suy luận, chưa đo).
+- Seed cố định giữ được khả năng lặp lại: đo 22/10, T=0.4 + seed 42 → 3 lần giống hệt; không cố định seed → 3 lần khác nhau (cùng bản dựng, cùng máy, 1 slot).
+- **Còn phải đo** trên tập kiểm định: T = 0 / 0.4 / 0.7 × (độ đúng, tỷ lệ trượt guardrail, tỷ lệ bị cắt vì `max_tokens`, tỷ lệ trích khớp từng chữ).
+
 ### Bài đo ngoại tuyến
+
+**Chỉ số phụ:** BERTScore [BERTScore] giữa câu trả lời và đáp án mẹ đã duyệt — đo độ giống theo nghĩa. Không thay kiểm con số tất định (embedding của "1,5 lít" và "2,0 lít" có thể rất gần — suy luận, chưa đo). Guardrail g cũng là một chỉ số: tỷ lệ câu kết luận được căn cứ ủng hộ trên bộ đo; cần đo độ khớp giữa guardrail g và nhãn của mẹ trước khi tin.
+
 
 **Mức mệnh đề — câu trả lời có bám kho dữ liệu không**
 
@@ -239,5 +279,13 @@ Chỉ số chính cho người dùng đọc: **tỷ lệ ảo giác** trên bộ
 - **[BamiBERT]** Dat Quoc Nguyen, Thinh Pham, Chi Tran, Linh The Nguyen. arXiv:2607.02259, 2026. https://arxiv.org/abs/2607.02259 — model `Qualcomm-AI-Research/BamiBERT`
 - **[PhoBERT]** Dat Quoc Nguyen, Anh Tuan Nguyen. *PhoBERT: Pre-trained language models for Vietnamese.* Findings of EMNLP 2020. — model `vinai/phobert-base`
 - **[DeBERTaV3]** Pengcheng He, Jianfeng Gao, Weizhu Chen. *DeBERTaV3: Improving DeBERTa using ELECTRA-Style Pre-Training with Gradient-Disentangled Embedding Sharing.* arXiv:2111.09543. — model `microsoft/mdeberta-v3-base`
+- **[AlignScore]** Yuheng Zha, Yichi Yang, Ruichen Li, Zhiting Hu. *AlignScore: Evaluating Factual Consistency with A Unified Alignment Function.* ACL 2023. arXiv:2305.16739. https://github.com/yuh-zha/AlignScore
+- **[BERTScore]** Tianyi Zhang, Varsha Kishore, Felix Wu, Kilian Q. Weinberger, Yoav Artzi. *BERTScore: Evaluating Text Generation with BERT.* ICLR 2020. arXiv:1904.09675. https://github.com/Tiiiger/bert_score
+- **[mDeBERTa-NLI]** Moritz Laurer. `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` (model card, HuggingFace). https://huggingface.co/MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+- **[Roig]** JV Roig. *How Much Do LLMs Hallucinate in Document Q&A Scenarios? A 172-Billion-Token Study Across Temperatures, Context Lengths, and Hardware Platforms.* arXiv:2603.08274, 2026. https://arxiv.org/abs/2603.08274
+- **[Renze]** Matthew Renze. *The Effect of Sampling Temperature on Problem Solving in Large Language Models.* Findings of EMNLP 2024. https://aclanthology.org/2024.findings-emnlp.432/
+- **[LegalBench]** Neel Guha và cộng sự. *LegalBench: A Collaboratively Built Benchmark for Measuring Legal Reasoning in Large Language Models.* arXiv:2308.11462 (cách đặt temperature: theo kết quả tìm kiếm, chưa đọc toàn văn).
+- **[Dahl]** Matthew Dahl, Varun Magesh, Mirac Suzgun, Daniel E. Ho. *Large Legal Fictions: Profiling Legal Hallucinations in Large Language Models.* Journal of Legal Analysis 16(1), 2024. https://doi.org/10.1093/jla/laae003 (theo kết quả tìm kiếm, chưa đọc toàn văn).
+- **[Guo]** Chuan Guo, Geoff Pleiss, Yu Sun, Kilian Q. Weinberger. *On Calibration of Modern Neural Networks.* ICML 2017. arXiv:1706.04599. https://arxiv.org/abs/1706.04599
 - **[SetFit]** Lewis Tunstall, Nils Reimers, Unso Eun Seo Jo, Luke Bates, Daniel Korat, Moshe Wasserblat, Oren Pereg. *Efficient Few-Shot Learning Without Prompts.* arXiv:2209.11055, 2022. https://arxiv.org/abs/2209.11055
 - Tesseract: gói tiếng Việt `vie` trong `tesseract-ocr/tessdata_best` (Apache-2.0); bản cài Windows của UB Mannheim (Apache-2.0).

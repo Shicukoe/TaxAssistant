@@ -169,6 +169,8 @@ python -m app.db.check_database    # should print PASS
 
 # Answer model (self-hosted): llama.cpp build + GGUF live outside the repo (default D:/models)
 bash scripts/run_model_server.sh     # llama-server on 127.0.0.1:9931, OpenAI-compatible API + built-in chat UI
+pip install -e ".[answer]"
+bash scripts/chat_demo.sh            # terminal chat over the law database, prints the state after every step
 
 # Data pipeline (run in order)
 pip install -e ".[pipeline]"
@@ -209,6 +211,11 @@ app/
 dagster_home/dagster.yaml                Dagster config (run history and logs live here, not committed)
 scripts/run_pipeline.sh                  run the pipeline once, or open Dagster (UI + weekly schedule)
 scripts/run_model_server.sh              start llama-server with the answer model (flags documented inline)
+scripts/chat_demo.sh                     terminal demo of the answer graph: chat + per-step debug output
+app/answer/check_claim_support.py        guardrail: each conclusion sentence must be entailed by the cited clause (AlignScore-style, multilingual NLI on CPU; shadow mode until calibrated)
+app/ingest/check_sources.py              source registry + live health probe per site (checks content, not just HTTP 200)
+app/ingest/discover_from_other_sources.py  congbao RSS + vanban.chinhphu.vn → new tax documents, independent of the main source
+app/ingest/link_consolidated_documents.py  consolidated documents → base/amending relations; flags JSON whose content is a different document
 CLAUDE.md                                entry point for AI coding agents: what to read, in what order
 docs/                                    design documents (Vietnamese)
   project-overview.md          product, scope, success criteria

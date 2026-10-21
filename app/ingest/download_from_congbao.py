@@ -156,7 +156,7 @@ def download_missing_from_congbao() -> StageReport:
     known_missing = set(MISSING_FILES.read_text(encoding="utf-8").splitlines()) if MISSING_FILES.exists() else set()
     jobs = [j for j in jobs if j[2] not in known_missing]
     log.info("cần tải %d file", len(jobs))
-    moj.download_and_save(jobs, report, missing_file=MISSING_FILES)
+    moj.download_and_save(jobs, report, missing_file=MISSING_FILES, source="congbao")
     log.info(report.summary())
     return report
 

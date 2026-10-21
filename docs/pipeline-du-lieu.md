@@ -36,8 +36,14 @@ Mọi định nghĩa nằm trong `app/pipeline/definitions.py`. File này chỉ 
 ## Các công đoạn
 
 ```
-moj_document_list ──► moj_documents ──┬──► database_documents
-(danh sách, sitemap)  (JSON Bộ Tư pháp) │
+source_health  (kiểm sống từng trang — mỗi trang một bài kiểm nguon_<tên>)
+   │
+   ├──► other_source_documents   (RSS congbao + docid mới của vanban.chinhphu.vn → văn bản thuế
+   │                              → đối chiếu Bộ Tư pháp → tải bản gốc văn bản Bộ Tư pháp chưa có)
+   ▼
+moj_document_list ──► moj_documents ──┬──► database_documents ──► consolidated_links
+(danh sách, sitemap)  (JSON Bộ Tư pháp) │                         (nối văn bản hợp nhất,
+                                        │                          kiểm JSON đúng văn bản)
                                         ├──► congbao_documents
 moj_attachments ────────────────────────┘    (tìm bù trên congbao)
 (file đính kèm)
@@ -45,14 +51,37 @@ moj_attachments ─────────────────────�
 
 | Asset | Hàm gọi | Bài kiểm | Loại |
 |---|---|---|---|
+| `source_health` | `check_sources` | `nguon_<tên>` cho **từng trang** (vbpl_sitemap, moj_gateway, congbao, vanban_chinhphu, gdt): trả lời đúng **nội dung mong đợi**, không chỉ mã 200 | cảnh báo |
+| `other_source_documents` | `discover_from_other_sources` | `ty_le_loi` ≤ 5%; `rss_congbao_co_the_sot`: cả 50 mục RSS đều mới hơn lần chạy trước → có thể đã sót văn bản | cảnh báo |
 | `moj_document_list` | `update_document_list` | `sitemap_day_du`: sitemap phải có ≥ 90% số văn bản đã biết. Thấp hơn nghĩa là sitemap đang hỏng, không cập nhật | chặn |
 | | | `doc_duoc_moi_sitemap`: mọi file sitemap đều đọc được | cảnh báo |
 | `moj_documents` | `download_documents` | `ty_le_loi` ≤ 5% | chặn |
 | `moj_attachments` | `download_attachments` | `ty_le_loi` ≤ 5% | cảnh báo |
 | `congbao_documents` | `download_missing_from_congbao` | `ty_le_loi` ≤ 5% | cảnh báo |
 | `database_documents` | `save_documents_to_database` | `ty_le_loi` ≤ 1% | chặn |
+| `consolidated_links` | `link_consolidated_documents` | `ty_le_loi` ≤ 5%; `json_dung_van_ban`: liệt kê văn bản có số hiệu ở đầu chữ khác số hiệu của chính nó | cảnh báo |
 
 Các ngưỡng trên là tạm, sẽ chỉnh sau vài lần chạy thật.
+
+**Nhiều nguồn, tự chuyển khi hỏng** (chốt 22/10/2026):
+
+| Việc | Thứ tự nguồn |
+|---|---|
+| Phát hiện văn bản mới | sitemap vbpl.vn → RSS "văn bản mới ban hành" của congbao → docid mới của vanban.chinhphu.vn |
+| Lấy chữ / bản gốc | JSON Bộ Tư pháp → file đính kèm Bộ Tư pháp → congbao (Word trước, PDF sau) → vanban.chinhphu.vn |
+| Công văn | gdt.gov.vn (đang chặn script) → vanban.chinhphu.vn (công văn Bộ Tài chính) — làm ở bước Công văn |
+
+- Nhánh `other_source_documents` **không phụ thuộc** nhánh Bộ Tư pháp: cổng Bộ Tư pháp sập thì văn bản mới vẫn được tải về từ congbao và chinhphu.vn.
+- Bản gốc của nguồn khác chỉ được **lưu** (`data/raw/congbao/new/`, `data/raw/vanban_chinhphu/`); nạp database khi đã có bước đọc file đính kèm.
+- Văn bản thuế có trên nguồn khác mà Bộ Tư pháp chưa có → liệt kê trong báo cáo (`chua_co_tren_bo_tu_phap`). Danh sách dài ra theo thời gian là dấu hiệu cổng Bộ Tư pháp chậm hoặc hỏng.
+- **Giới hạn:** nhiều nguồn giúp pipeline không dừng khi một trang hỏng, nhưng trang **đổi định dạng / API** thì vẫn phải sửa code đọc trang đó. `source_health` kiểm cả nội dung nên phát hiện được sớm.
+
+**Khi `source_health` báo một nguồn chết:** công đoạn dùng nguồn đó dừng ngay với lỗi `[tên nguồn] source_health báo nguồn chết` và **không thử lại** (thử lại 10/20 phút vô ích vì `source_health` không chạy lại giữa chừng); lần chạy sau tự kiểm lại. Nhánh `other_source_documents` bỏ qua đúng nguồn chết, nguồn còn lại vẫn chạy (đã mô phỏng 22/10/2026).
+
+**Biết trang nào hỏng:**
+1. Giao diện Dagster → asset `source_health` → tab Checks: bài kiểm `nguon_<tên>` đỏ = trang đó hỏng; metadata có địa chỉ, mã HTTP, lý do, thời gian phản hồi.
+2. Mọi dòng log lỗi mạng mở đầu bằng `[tên nguồn]`, ví dụ `[moj_gateway] HTTP 500 …`.
+3. Bản ghi mới nhất cũng ở `data/raw/source_health.json`.
 
 **Ba lớp chống lỗi, từ nhỏ tới lớn:**
 

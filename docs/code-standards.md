@@ -38,6 +38,7 @@
 - Mọi lần tải đi qua `download_and_save` trong `download_moj_documents.py`: nghỉ `FETCH_DELAY_SECONDS` giữa các lần gọi, dùng `FETCH_USER_AGENT`.
 - **Ghi file nguyên tử:** ghi ra `.tmp` rồi đổi tên — bị ngắt giữa chừng không để lại file hỏng.
 - **Chạy lại được bất cứ lúc nào:** thứ đã có trên đĩa thì bỏ qua — trừ văn bản còn hiệu lực: tải lại, so dấu vân tay (`document_fingerprint`), khác thì bản cũ vào `history/`. Không bao giờ ghi đè bản gốc.
+- **Lỗi mạng phải nói rõ trang nào:** log và thông báo lỗi mở đầu bằng `[tên nguồn]` (`check_sources.source_name_for_url`). Thêm nguồn mới = thêm vào bảng nguồn trong `check_sources.py` kèm hàm kiểm sống có **kiểm nội dung**.
 - **Lỗi mạng tạm thời tự thử lại** trong `http_request` (lỗi mạng, 429, 5xx; chờ 5 rồi 15 giây). Lỗi 4xx khác là lỗi thật, không thử lại.
 - File máy chủ báo không có (404) ghi vào `missing.txt` **của nguồn đó** và không thử lại.
 - **Cô lập lỗi:** mỗi văn bản tự bắt lỗi, ghi vào `StageReport` (id + lý do), công đoạn chạy tiếp. Chỉ khi lỗi liên tiếp `MAX_CONSECUTIVE_FAILURES` lần mới dừng, bằng `SourceUnavailableError`. Không dùng `sys.exit` trong hàm của công đoạn.
@@ -54,6 +55,9 @@
 - Node không ghi database giữa chừng; chỉ node cuối ghi `questions`/`answers`. Lý do: `interrupt` và thử lại chạy lại node từ đầu — tác dụng phụ trước đó sẽ bị lặp.
 - State chỉ chứa thứ cần cho các bước sau (ô hiểu câu hỏi, id các đoạn tìm được, bản nháp, kết quả guardrail) — không nhét cả văn bản luật vào state.
 - `RetryPolicy` chỉ cho lỗi kết nối (`llama-server`, Postgres), không thử lại khi model trả lời kém.
+- **Mọi lời gọi model gửi rõ thông số lấy mẫu** — không dựa vào mặc định của server. Viết câu trả lời: `config.LLM_ANSWER_TEMPERATURE` (0.4) + `LLM_TOP_P`, `LLM_TOP_K`, `LLM_SEED`, `LLM_ANSWER_MAX_TOKENS`; phân loại: `config.LLM_CLASSIFY_TEMPERATURE` (0). Không bật phạt lặp (`presence_penalty`, `repeat_penalty`) — làm sai chữ trong đoạn trích. Lý do và nguồn: `danh-gia.md`.
+- **Async trên Windows:** psycopg async không chạy với `ProactorEventLoop` mặc định của Windows (tài liệu psycopg) → chạy bằng `asyncio.run(..., loop_factory=asyncio.SelectorEventLoop)`.
+- Gọi `llama-server` bằng `httpx.AsyncClient` (async, có timeout); usage của từng lời gọi giữ trong state, bước cuối mới ghi `usage_log`.
 - Chi tiết bổ sung khi bắt đầu bước Trả lời.
 
 ## Tài liệu
@@ -69,6 +73,7 @@
 - `app/db/` — schema, migration, tạo user, bài tự kiểm database
 - `app/ingest/` — tải, tách, nạp văn bản; mỗi file một việc, tên là việc đó
 - `app/pipeline/definitions.py` — nối công đoạn thành pipeline Dagster; không chứa logic
+- `scripts/chat_demo.sh` — demo chat trong terminal, in state sau từng bước; lệnh `/moi`, `/lichsu`, `/thoat`
 - `scripts/run_model_server.sh` — chạy `llama-server`; mỗi cờ có chú thích lý do, lấy từ README của đúng bản llama.cpp đang dùng
 - `scripts/run_pipeline.sh` — chạy pipeline / mở giao diện Dagster. Script viết bằng bash (chạy trên Git Bash và Linux), không viết PowerShell
 - `data/raw/` — bản gốc tải về, không commit

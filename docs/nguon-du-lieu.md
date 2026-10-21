@@ -40,6 +40,14 @@ Vì vậy project chọn: **chỉ lấy dữ liệu công khai và không vi ph�
 
 **Cổng sửa văn bản sau khi đăng** (đo 15/10/2026): tải lại 20 văn bản còn hiệu lực đã lưu ngày 02/10 → 4 văn bản đổi nội dung HTML, 8 văn bản có trường nào đó đổi (phần lớn là `reviewStatus`), không văn bản nào đổi trạng thái hiệu lực. Có văn bản chỉ thêm markup (chữ y nguyên), có văn bản sửa chữ thật — Nghị định 41/2022/NĐ-CP khác 16 dòng ("KTH" → "KTTH", dấu ":" → ";"…). Vì vậy pipeline tải lại văn bản còn hiệu lực mỗi lần chạy và giữ bản cũ trong `history/`.
 
+**JSON của một văn bản có thể chứa văn bản khác** (đo 22/10/2026): JSON của Nghị định 125/2020/NĐ-CP (xử phạt về thuế) chứa **công văn đính chính 29/CP-KTTH**, không chứa nghị định; JSON của Thông tư 75/A-TC-TCT chứa nội dung số 74/A-TC-TCT. Phép kiểm thô "số hiệu có ở phần đầu văn bản không" gắn cờ 416/1.834 văn bản nhưng phần lớn là cảnh báo nhầm (văn bản cũ không có dòng "Số:", viết "SỐ", viết "73A-TC/TCT" thay vì "73/A-TC-TCT") — cần phép kiểm tốt hơn trước khi tin con số. Nội dung thật của NĐ 125/2020 có ở văn bản hợp nhất 27/2026/VBHN-NĐ-BTC (51 Điều).
+
+**Đoạn mở đầu của văn bản hợp nhất có khuôn cố định** (đúng Pháp lệnh Hợp nhất): "Nghị định số 125/2020/NĐ-CP ngày … có hiệu lực kể từ ngày …, được sửa đổi, bổ sung bởi: Nghị định số 102/2021/NĐ-CP …, có hiệu lực kể từ …; …" → đọc ra văn bản gốc và các văn bản sửa đổi bằng quy tắc. Chỉ 47/107 văn bản hợp nhất ghi số hiệu văn bản gốc trong **tiêu đề**; và 82/107 có JSON rỗng (chữ nằm trong file đính kèm) — đoạn mở đầu đọc được khi đã trích chữ file đính kèm.
+
+**Số hiệu không phải khoá:** 112 nhóm số hiệu trùng nhau trong database — 24 văn bản "Không số", số hiệu văn bản hợp nhất lặp lại mỗi năm ("11/VBHN-BTC" ×5). Khớp văn bản phải dùng `source_uuid`, hoặc số hiệu + ngày ban hành.
+
+**Định dạng thật của file đính kèm** (đọc vài byte đầu, 22/10/2026): 210 RTF (đuôi .doc), 107 Word 97 (OLE), 140 PDF; congbao có 21 .doc + 28 PDF.
+
 **Trạng thái hiệu lực không lọc cứng được** (đo 22/10/2026 trên database): 90/107 văn bản hợp nhất có trạng thái **để trống** — gồm cả 113/VBHN-VPQH (hợp nhất Luật Thuế TNDN năm 2026). Luật gốc đang dùng thường mang `HHL1P` (hết hiệu lực một phần) chứ không phải `CHL` — ví dụ Luật Thuế TNDN 67/2025/QH15 sau khi bị Luật 09/2026/QH16 sửa. Lọc `eff_status_code = 'CHL'` loại mất đúng các văn bản cần nhất. Hiệu lực của văn bản hợp nhất phải suy từ văn bản được hợp nhất và từ chú thích; việc này thuộc bước Lịch sử sửa đổi.
 
 File 404 chủ yếu là .doc của văn bản trước 2003; danh sách ở `data/raw/moj/files/missing.txt`, bộ tải không thử lại. 8 văn bản cổng luôn trả lỗi 500 thì vẫn được thử lại mỗi lần (rẻ, và biết đâu cổng sửa).
@@ -55,6 +63,9 @@ Danh sách văn bản lấy từ `vbpl.vn/sitemap.xml`: 37 file, khoảng 172.00
 - Không truy cập `/api/` và `/Pages/` của vbpl.vn — robots.txt cấm.
 
 ### congbao.chinhphu.vn — nguồn dự phòng
+
+- **RSS văn bản mới** (kiểm 22/10/2026): `https://congbao.chinhphu.vn/cac-van-ban-moi-ban-hanh.rss` — 50 văn bản mới nhất; `title` để trống, `description` là trích yếu, `link` kết thúc bằng mã văn bản (…-470833.htm) trùng `id_van_ban` của API tìm kiếm. RSS chỉ giữ 50 mục → chạy thưa quá thì sót.
+- Gõ tay lệnh curl với số hiệu có chữ "Đ" từ Git Bash có thể bị mã hoá sai → API trả 400; gọi qua code Python thì đúng.
 
 - **Có:** PDF có chữ + file Word, RSS văn bản mới, văn bản hợp nhất.
 - **Bắt buộc:** ghi rõ nguồn "congbao.chinhphu.vn".
@@ -92,7 +103,7 @@ Kiểm 12/10/2026. Có hai mức dùng khác nhau:
 |---|---|---|---|
 | vbpl.vn + cổng JSON Bộ Tư pháp | Cơ sở dữ liệu quốc gia về pháp luật (Luật 64/2025 Điều 66) | Cấm `/api/`, `/Pages/` | Lấy chữ — nguồn chính |
 | congbao.chinhphu.vn | Công báo điện tử — nơi bắt buộc đăng toàn văn văn bản quy phạm pháp luật trung ương (Nghị định 78/2025 Điều 7) | Cho phép tất cả | Lấy chữ — nguồn dự phòng, đã dùng |
-| vanban.chinhphu.vn | "Hệ thống văn bản" của Cổng thông tin Chính phủ | Cho phép tất cả | Lấy chữ được theo robots.txt; **chưa kiểm** cấu trúc trang và điều khoản |
+| vanban.chinhphu.vn | "Hệ thống văn bản" của Cổng thông tin Chính phủ | Cho phép tất cả | **Lấy chữ** (kiểm 22/10/2026): chân trang ghi "Ghi rõ nguồn 'Cục Thông tin và Truyền thông Chính phủ' hoặc 'www.chinhphu.vn' khi phát hành lại thông tin" — không cấm thu thập tự động → **phải ghi nguồn chinhphu.vn**. Trang chi tiết GET được theo `/?pageid=27160&docid=N` (docid tăng dần), có Số ký hiệu / Ngày ban hành / Loại / Cơ quan / Trích yếu; file ở `datafiles.chinhphu.vn/cpp/files/vbpq/…` tải được (trang gốc datafiles trả 403 nhưng link file chạy). Danh sách và ô tìm kiếm là ASP.NET `__doPostBack` (phụ thuộc phiên) → không dùng, dò theo docid. Có cả công văn Bộ Tài chính |
 | phapluat.gov.vn | "Cổng Pháp luật quốc gia" | Cấm `/api/`, `/_next/`, `/admin/`. Sitemap trỏ sang tên miền lạ `phapluat-dev.biznext.vn` | **Chưa kiểm** điều khoản; sitemap lạ → chưa tin để tải tự động |
 | quochoi.vn | Văn bản của Quốc hội | Trang bắt chạy JavaScript đặt cookie mới vào được | Chỉ đặt link |
 | mof.gov.vn | Cổng Bộ Tài chính | Không có robots.txt (trả về trang web) | Chỉ đặt link |

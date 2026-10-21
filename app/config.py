@@ -48,9 +48,25 @@ RAW_DATA_DIR = PROJECT_ROOT / os.getenv("RAW_DATA_DIR", "./data/raw")
 # Khởi động server: bash scripts/run_model_server.sh (cổng mặc định của llama-server là 9931).
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://127.0.0.1:9931/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.5-4b")  # tên đặt bằng cờ -a của llama-server
-# Mọi lời gọi model gửi rõ temperature — không dựa vào mặc định của server (giá trị trong yêu cầu luôn thắng).
-# 0 = bám chữ trong ngữ cảnh nhất và lặp lại được; lý do chi tiết ở scripts/run_model_server.sh.
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
+# Mọi lời gọi model gửi rõ thông số lấy mẫu — không dựa vào mặc định của server (giá trị trong yêu cầu luôn thắng).
+# Lý do và nguồn nghiên cứu: docs/danh-gia.md, mục "Thông số lấy mẫu khi viết câu trả lời".
+LLM_ANSWER_TEMPERATURE = float(os.getenv("LLM_ANSWER_TEMPERATURE", "0.4"))  # T=0 làm model nhỏ dễ lặp vô tận
+LLM_CLASSIFY_TEMPERATURE = float(os.getenv("LLM_CLASSIFY_TEMPERATURE", "0"))  # đầu ra ngắn, bị schema ép
+LLM_TOP_P = float(os.getenv("LLM_TOP_P", "0.8"))  # theo model card Qwen3.5, chế độ không suy luận
+LLM_TOP_K = int(os.getenv("LLM_TOP_K", "20"))
+LLM_SEED = int(os.getenv("LLM_SEED", "42"))  # cố định → cùng câu hỏi ra cùng câu trả lời (để debug)
+LLM_ANSWER_MAX_TOKENS = int(os.getenv("LLM_ANSWER_MAX_TOKENS", "1500"))  # chặn lặp vô tận
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
+
+# Guardrail g: mỗi câu kết luận phải được căn cứ ủng hộ (docs/danh-gia.md). Model NLI đa ngôn ngữ, chạy CPU.
+NLI_MODEL = os.getenv("NLI_MODEL", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
+NLI_SUPPORT_THRESHOLD = float(os.getenv("NLI_SUPPORT_THRESHOLD", "0.5"))  # TẠM — đặt lại trên tập kiểm định
+# Chế độ đo (shadow): luôn chấm và lưu điểm, nhưng CHƯA hiện cảnh báo cho người dùng tới khi hiệu chỉnh xong ngưỡng.
+# Đo 22/10/2026: câu sai đối tượng (rượu của thuyền viên áp cho hành khách) được 0,780 điểm ủng hộ — qua ngưỡng 0,5.
+NLI_WARNINGS_VISIBLE = os.getenv("NLI_WARNINGS_VISIBLE", "false").lower() == "true"
+
+# README của langgraph-checkpoint-postgres: đọc lại checkpoint không giới hạn kiểu có thể bị lợi dụng chạy code.
+os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 
 # --- Giám khảo cho bộ đo — chỉ dùng khi chạy bộ đo, không bao giờ trong app ---
 # Điểm chấm của giám khảo không bao giờ làm dữ liệu huấn luyện (quy tắc bất biến số 13).
