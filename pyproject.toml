@@ -12,7 +12,6 @@ dependencies = [
 # cần từ bước "Lấy văn bản luật về"
 ingest = [
     "httpx>=0.27",
-    "lxml>=5.2",
     # File đính kèm (.doc/RTF/PDF) do Apache Tika 4.1.0 đọc — chương trình Java ngoài Python, đường dẫn trong .env
     # (JAVA_EXE, TIKA_APP_JAR; docs/architecture.md, Đọc file đính kèm).
 ]
@@ -31,9 +30,9 @@ answer = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "jinja2>=3.1",
+    # băm mật khẩu Argon2id (docs/architecture.md, Truy cập và phân quyền — lựa chọn đầu của OWASP Password Storage)
+    "argon2-cffi>=25.1,<26",
 ]
-# bộ đo ngoại tuyến (giám khảo LLM) — không dùng trong app
-eval = ["anthropic>=0.40"]
 
 # Chỉ đóng gói thư mục app/; data/ là dữ liệu tải về, không phải mã nguồn.
 [tool.setuptools.packages.find]

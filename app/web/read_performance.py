@@ -3,6 +3,7 @@
 Thời gian trả lời là answers.duration_ms (migration 010) — từ lúc nhận câu hỏi tới lúc lưu, gồm cả tìm kiếm và các
 bước kiểm; câu trả lời cũ để trống. Bộ nhớ GPU đọc bằng nvidia-smi, tốc độ đọc/sinh đọc từ /metrics của llama-server
 (bật bằng --metrics trong scripts/run_model_server.sh). Thiếu nguồn nào thì trang ghi "không đọc được", không lỗi.
+Số đếm và thời gian tính trên mọi tài khoản (không có chữ câu hỏi); danh sách câu gần đây chỉ có câu của người xem.
 """
 
 import asyncio
@@ -30,7 +31,9 @@ DURATION_SQL = f"""
 RECENT_SQL = f"""
     select q.asked_at, q.text, {BRANCH_SQL} as nhanh, a.duration_ms / 1000.0 as giay, a.has_cause,
            (select sum(u.duration_ms) from usage_log u where u.question_id = q.id) / 1000.0 as giay_model
-    from questions q left join answers a on a.question_id = q.id
+    from questions q join conversations c on c.thread_id = q.thread_id
+                     left join answers a on a.question_id = q.id
+    where c.user_id = %s
     order by q.asked_at desc
     limit 20"""
 # Tốc độ = tổng token ÷ tổng giây, từ các bộ đếm cộng dồn (TYPE counter) kể từ lúc llama-server khởi động. Không dùng
@@ -70,10 +73,10 @@ async def read_model_speed() -> dict | None:
     return speed or None
 
 
-async def load_performance() -> dict:
+async def load_performance(user_id: int) -> dict:
     async with await psycopg.AsyncConnection.connect(config.DATABASE_CONNECTION, row_factory=dict_row) as conn:
         counts = await (await conn.execute(COUNT_SQL)).fetchone()
         durations = await (await conn.execute(DURATION_SQL)).fetchall()
-        recent = await (await conn.execute(RECENT_SQL)).fetchall()
+        recent = await (await conn.execute(RECENT_SQL, (user_id,))).fetchall()
     gpu, speed = await asyncio.gather(asyncio.to_thread(read_gpu_memory), read_model_speed())
     return {"so_cau": counts, "thoi_gian": durations, "gan_day": recent, "gpu": gpu, "toc_do": speed}

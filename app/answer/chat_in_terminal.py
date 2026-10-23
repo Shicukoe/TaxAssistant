@@ -24,6 +24,7 @@ DEBUG_FIELDS = {
     "split_question": ["search_parts"],
     "search_articles": ["articles"],
     "add_referenced_articles": ["articles"],
+    "add_deadline_rule": ["calendar_notes", "articles"],
     "write_answer": ["draft"],
     "check_citations": ["citations", "unverified_numbers", "has_cause"],
     "check_claim_support": ["claim_support", "support_score", "claim_unscored"],

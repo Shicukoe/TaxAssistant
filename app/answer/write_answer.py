@@ -85,7 +85,8 @@ def format_context(articles: list[dict], texts: dict[int, str]) -> str:
                 text = text[start:end]
                 note = f", khoản {reference['khoan']}"
             limit = min(MAX_REFERENCED_CHARS, per_article)
-            note += f", được dẫn chiếu từ đoạn [{reference['tu_doan']}]"
+            note += (f", được dẫn chiếu từ đoạn [{reference['tu_doan']}]" if reference["tu_doan"]
+                     else ", quy định chấm dứt khoản thu — văn bản về khoản thu đó không còn áp dụng")
         if article.get("het_hieu_luc"):
             note += f". ĐÃ HẾT HIỆU LỰC: {expiry_note(article['het_hieu_luc'])}"
         cut_note = " (đã cắt bớt)" if len(text) > limit else ""
@@ -109,8 +110,13 @@ async def write_answer(state: dict) -> dict:
         f"Mốc thời gian: {state['as_of_date']}\n\nCác đoạn văn bản luật:\n{format_context(articles, texts)}"
         f"\n\nCâu hỏi: {state['question']}"
     )
+    if notes := state.get("calendar_notes"):  # add_deadline_rule: thời hạn rơi vào ngày nghỉ, code tính sẵn
+        question += ("\n\nLịch đã tính sẵn, đúng — dùng làm dữ kiện: thời hạn trong đoạn luật rơi vào ngày nghỉ thì "
+                     "ngày cuối cùng là ngày làm việc liền kề sau, theo đoạn quy định về ngày nghỉ ở trên. Câu hỏi nêu "
+                     "một ngày thì so ngày đó với thời hạn sau khi lùi, trả lời đúng hay sai và trích cả đoạn thời hạn "
+                     "lẫn đoạn quy định về ngày nghỉ:\n" + "\n".join(f"- {note['ghi_chu']}" for note in notes))
     if len(parts) > 1:
-        question += "\n\nCác ý cần trả lời, theo đúng thứ tự trong tung_y:\n" + "\n".join(
+        question +="\n\nCác ý cần trả lời, theo đúng thứ tự trong tung_y:\n" + "\n".join(
             f"{number}. {part}" for number, part in enumerate(parts, start=1))
     write = stream_writer()
     shown = ""

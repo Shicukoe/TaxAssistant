@@ -13,10 +13,12 @@ Bài tự kiểm: python -m app.answer.check_citations
 """
 
 import re
+from datetime import date
 
 import psycopg
 
 from app import config
+from app.answer.add_deadline_rule import dates_without_basis, with_calendar_notes
 from app.answer.search_articles import expiry_note, load_chunk_texts, provision_label
 
 NUMBER_PATTERN = re.compile(r"\d+(?:[.,]\d+)*\s*%?")
@@ -25,6 +27,8 @@ NUMBER_PATTERN = re.compile(r"\d+(?:[.,]\d+)*\s*%?")
 REFERENCE_NUMBERS = re.compile(
     r"\b(?:[Đđ]iều|[Kk]hoản|[Đđ]iểm|[Cc]hương|[Mm]ục|[Pp]hụ lục)\s+[0-9IVXL]+[a-zđ]?\b"
     r"|\b\d+(?:/\d{4})?/[0-9]*[A-ZĐ][A-ZĐa-zđ0-9-]*|^\s*\d+\.\s", re.MULTILINE)
+# Dòng cảnh báo trong answers.text — web đọc lại khi mở cuộc hội thoại cũ (saved_unverified_numbers).
+UNVERIFIED_NUMBERS_LINE = "⚠ Con số chưa có căn cứ trong đoạn trích: "
 
 
 def collapse_whitespace(text: str) -> tuple[str, list[int]]:
@@ -119,6 +123,8 @@ async def check_citations(state: dict) -> dict:
             if position is None:
                 citations.append({**item, "trang_thai": "bo_khong_khop", "so_hieu": article["so_hieu"]})
                 continue
+            if any(c.get("chunk_id") == article["chunk_id"] and c.get("vi_tri_ky_tu") == position for c in citations):
+                continue  # model trích cùng một đoạn nhiều lần — hiện một lần
             label = await label_position(conn, article["chunk_id"], position)
             # chunk_id + vi_tri_ky_tu: guardrail g (check_claim_support) lấy cả khoản chứa đoạn trích làm ngữ cảnh
             citations.append({**item, "trang_thai": "dat", "so_hieu": article["so_hieu"], "tieu_de": article.get("tieu_de"), "document_id": article.get("document_id"), "loai": article["loai"],
@@ -128,11 +134,22 @@ async def check_citations(state: dict) -> dict:
                               "chunk_id": article["chunk_id"], "vi_tri_ky_tu": position})
 
     verified = [c for c in citations if c["trang_thai"] == "dat"]
+    notes = state.get("calendar_notes") or []
+    as_of = date.fromisoformat(str(state["as_of_date"])[:10])
+    # ngày trong dòng lịch do code tính (add_deadline_rule) — không cần đoạn trích làm căn cứ
     unverified_numbers = numbers_without_basis(
         draft.get("ket_luan", ""), " ".join(c["trich_dan"] for c in verified),
-        known=[state["question"], str(state["as_of_date"])[:4]] + [c["so_hieu"] or "" for c in verified])
+        known=[state["question"], f"{as_of:%d/%m/%Y}"] + [c["so_hieu"] or "" for c in verified]
+        + [note["ghi_chu"] for note in notes])
+    # ngày đủ năm kiểm cả ngày, thứ trong tuần kiểm bằng lịch — kiểm từng số rời không bắt được ngày sai
+    unverified_numbers += dates_without_basis(
+        draft.get("ket_luan", ""), [c["trich_dan"] for c in verified] + [state["question"], f"{as_of:%d/%m/%Y}"],
+        notes, as_of.year)
     has_cause = draft.get("co_can_cu", False) and any(c["trang_thai"] == "dat" for c in citations)
+    if notes and has_cause:
+        draft = {**draft, "ket_luan": with_calendar_notes(draft.get("ket_luan", ""), state["question"], notes, as_of.year)}
     return {
+        "draft": draft,
         "citations": citations,
         "unverified_numbers": unverified_numbers,
         "has_cause": has_cause,
@@ -148,7 +165,7 @@ def render_answer(state: dict, draft: dict, citations: list[dict], unverified_nu
         lines.append("KHÔNG CÓ CĂN CỨ trong dữ liệu đã tìm.")
     lines.append(draft.get("ket_luan", ""))
     if unverified_numbers:
-        lines.append(f"⚠ Con số chưa có căn cứ trong đoạn trích: {', '.join(unverified_numbers)}")
+        lines.append(UNVERIFIED_NUMBERS_LINE + ", ".join(unverified_numbers))
     for citation in citations:
         if citation["trang_thai"] == "dat":
             warning = " [cần kiểm hiệu lực — văn bản cũ, cổng ghi còn hiệu lực]" if citation.get("can_kiem_hieu_luc") else ""
@@ -163,6 +180,14 @@ def render_answer(state: dict, draft: dict, citations: list[dict], unverified_nu
     if dropped:
         lines.append(f"({dropped} trích dẫn bị bỏ vì không khớp nguyên văn)")
     return "\n".join(lines)
+
+
+def saved_unverified_numbers(answer_text: str) -> list[str]:
+    """Con số chưa có căn cứ của câu trả lời đã lưu — đọc lại từ dòng cảnh báo trong answers.text."""
+    for line in answer_text.splitlines():
+        if line.startswith(UNVERIFIED_NUMBERS_LINE):
+            return line.removeprefix(UNVERIFIED_NUMBERS_LINE).split(", ")
+    return []
 
 
 def self_check() -> None:
@@ -183,6 +208,9 @@ def self_check() -> None:
     assert find_passage("câu không có ở đâu cả trong văn bản", 1, articles, texts) is None
     assert find_quote("Thuế suất là 20%.", "Điều 10.\n1. Thuế   suất\nlà 20%.") == 12, "khoảng trắng khác nhau vẫn khớp"
     assert find_quote("ngắn", "rất ngắn") is None
+    saved = render_answer({"as_of_date": "2026-10-23"}, {"ket_luan": "Phạt 8–25 triệu"}, [], ["25.000.000", "90"], True)
+    assert saved_unverified_numbers(saved) == ["25.000.000", "90"], "mở lại cuộc hội thoại vẫn thấy cảnh báo"
+    assert saved_unverified_numbers("Áp dụng tại mốc: 2026-10-23\nPhạt 8 triệu") == []
     print("PASS")
 
 

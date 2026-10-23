@@ -23,6 +23,11 @@ Chỉ số lấy từ nghiên cứu đã công bố (danh mục cuối file). Ch
    - **Kiểm định (validation)** — câu hỏi thật có nhãn của mẹ, dùng để **chỉnh**: khớp temperature scaling cho classifier, chọn ngưỡng độ tin, chọn temperature sinh câu trả lời, so prompt.
    - **Bộ đo (test)** — câu hỏi thật có nhãn của mẹ, **không bao giờ dùng để chỉnh**, chỉ chạy để báo số. Chỉnh trên bộ đo thì con số đẹp giả.
    Một câu hỏi chỉ nằm ở một tập; câu hỏi gần giống nhau (cùng ý, đổi vài chữ) cũng phải cùng tập. Tỷ lệ chia: chưa chốt — tuỳ số câu mẹ gom được.
+9. **Dữ liệu từ lịch sử hỏi đáp** (chốt 23/10/2026; bảng ở `architecture.md`, Lưu trữ):
+   - **Lấy gì:** câu hỏi (`questions`), đúng thứ model đã nhận và trả ở từng bước (`model_calls`), câu trả lời sau guardrail (`answers`), nhãn của người hỏi (`answer_feedback`: đúng / sai / chưa đủ + ghi chú). Chỉ của tài khoản `allow_training`.
+   - **Không dạy model bằng chính câu sai của nó.** Câu trả lời model viết chỉ làm đích huấn luyện khi người hỏi chấm **đúng**. Câu **sai** / **chưa đủ** vào tập kiểm định / bộ đo, hoặc thành đích huấn luyện sau khi được sửa tay. Ví dụ đo 23/10/2026: "nộp chậm 75 ngày" → model kết luận 5–8 triệu (khoản 3, 31–60 ngày) dù đoạn trích có khoản 4 (61–90 ngày, 8–15 triệu); mọi guardrail a–f đạt vì số 5.000.000 có thật trong đoạn được dẫn.
+   - **Chia theo cuộc hội thoại**, không theo câu: các lượt của một cuộc hội thoại dùng chung ngữ cảnh, tách ra hai tập là lộ đáp án. Câu đã vào kiểm định / bộ đo thì giữ ở đó, không chuyển.
+   - Lệnh xuất dữ liệu viết khi bắt đầu fine-tune (không viết trước — `code-standards.md`, Chung).
 
 ---
 
@@ -118,6 +123,8 @@ Chốt 18/10/2026: phần lấy thông tin phải đúng và càng tất định
 
 **Bài đo:** tỷ lệ lấy đúng mốc, so khớp chính xác ngày/năm với nhãn. Mỗi mẫu câu nhận ra được có một test riêng; câu nào trong bộ câu hỏi thật bị đọc sai thì thêm thành test trước khi sửa quy tắc.
 
+**Câu thật của mẹ đã thêm vào bộ đo tìm kiếm** (23/10/2026, `search_eval_questions.json`, đánh dấu `"nguon": "me"`, kèm `dap_an` — câu trả lời đúng theo ghi chú của mẹ, dùng cho bộ đo câu trả lời sau này): "2026 còn phải nộp thuế môn bài ko" (thiếu văn bản), "năm 2026 có được gia hạn nộp thuế GTGT, TNCN, TNDN" (mốc 31/12 + nghị định gia hạn năm cũ), "Ngày 2-11 là hạn cuối nộp thuế sử dụng đất phi nông nghiệp" (thời hạn rơi vào thứ Bảy); câu "chậm 75 ngày" có sẵn, thêm `dap_an`.
+
 ### 4b. Loại thuế và loại câu hỏi — model trên máy tạm thời, sau là classifier
 
 **Guardrail:** kết quả phải nằm trong danh sách cố định (danh sách loại thuế: chưa chốt); sai định dạng thì bỏ qua và tìm không ưu tiên loại nào. **Loại thuế chỉ dùng để ưu tiên, không lọc cứng.**
@@ -194,7 +201,7 @@ Thư viện cần thêm (`transformers`, `torch`, có thể `onnxruntime`) chỉ
 |---|---|---|
 | a | Mỗi đoạn trích khớp **từng chữ** với một đoạn đã lưu (`chunk_positions`) | Bỏ đoạn trích (đã thiết kế) |
 | b | Văn bản/Điều được dẫn phải nằm trong các đoạn đã tìm được cho câu hỏi này | Bỏ trích dẫn đó. Chữ trích khớp nguyên văn **đúng một** đoạn khác trong danh sách (model ghi nhầm số đoạn — gặp khi có 10 đoạn, 23/10/2026) → đổi về đoạn đó; vị trí Điều/khoản lấy theo chỗ khớp |
-| c | **Mọi con số** trong câu trả lời (tiền, tỷ lệ, ngày, thời hạn) phải xuất hiện trong đoạn được dẫn. Trừ (chốt 23/10/2026): số đã có trong câu hỏi, năm của mốc thời gian, số nằm trong số hiệu văn bản được dẫn, số của chỗ dẫn ("khoản 1 Điều 9", "19/VBHN-BTC"), số thứ tự đầu dòng ("2026" của "năm 2026" hay của "25/2026/VBHN-BTC" không phải thông tin lấy từ luật). Năm khác vẫn phải có căn cứ — "áp dụng từ năm 2027" khi luật ghi 2026 là lỗi | Gắn cờ "con số chưa có căn cứ", không hiện như căn cứ |
+| c | **Mọi con số** trong câu trả lời (tiền, tỷ lệ, ngày, thời hạn) phải xuất hiện trong đoạn được dẫn. Trừ (chốt 23/10/2026): số đã có trong câu hỏi, năm của mốc thời gian, số nằm trong số hiệu văn bản được dẫn, số của chỗ dẫn ("khoản 1 Điều 9", "19/VBHN-BTC"), số thứ tự đầu dòng ("2026" của "năm 2026" hay của "25/2026/VBHN-BTC" không phải thông tin lấy từ luật). Năm khác vẫn phải có căn cứ — "áp dụng từ năm 2027" khi luật ghi 2026 là lỗi. **Ngày ghi đủ năm kiểm cả ngày** (chốt 23/10/2026): phải có trong đoạn trích, câu hỏi, mốc, hoặc lịch do code tính (`add_deadline_rule`); câu "ngày X là thứ Y" kiểm thứ bằng lịch. Kiểm từng số rời không bắt được: model viết "31/10/2026 là Chủ nhật → 01/11/2026" (đúng là thứ Bảy → 02/11/2026) mà "01", "11" có ở chỗ khác | Gắn cờ "con số chưa có căn cứ", không hiện như căn cứ |
 | d | Không có đoạn nào tìm được → trả lời "không có căn cứ trích dẫn" | Không gọi model viết câu trả lời có trích dẫn |
 | e | Nhãn hết hiệu lực, công văn, OCR gắn theo dữ liệu, không theo lời model | — |
 | f | `llama-server` không trả lời trong thời gian chờ, hoặc hết bộ nhớ GPU | Báo lỗi rõ cho mẹ, không trả câu trả lời dở |

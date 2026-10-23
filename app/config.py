@@ -48,9 +48,18 @@ CONVERTED_DATA_DIR = PROJECT_ROOT / os.getenv("CONVERTED_DATA_DIR", "./data/conv
 JAVA_EXE = Path(os.getenv("JAVA_EXE", "D:/tools/java/jdk-21.0.12.1+1-jre/bin/java.exe"))
 TIKA_APP_JAR = Path(os.getenv("TIKA_APP_JAR", "D:/tools/tika/tika-app-4.1.0.jar"))
 
-# --- Web app (app/web) — chỉ cổng này nghe 0.0.0.0 cho máy trong Wi-Fi nhà; model, Postgres, Dagster giữ 127.0.0.1 ---
-WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
+# --- Web app (app/web) — nghe 127.0.0.1; máy khác vào qua tailscale serve (HTTPS, docs/architecture.md) ---
+WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("WEB_PORT", "8000"))
+# Địa chỉ trình duyệt dùng để mở app — so với header Origin khi trình duyệt không gửi Sec-Fetch-Site (chống CSRF)
+WEB_PUBLIC_ORIGIN = os.getenv("WEB_PUBLIC_ORIGIN", "")
+# Bí mật đọc bằng require_env lúc dùng (app/web/send_email_codes.py), không giữ ở đây:
+#   AUTH_SECRET    khoá HMAC cho mã OTP. Sinh: python -c "import secrets; print(secrets.token_hex(32))"
+#   SMTP_PASSWORD  App Password của tài khoản Gmail gửi mã (tài khoản phải bật xác minh 2 bước)
+# Gửi mã OTP qua SMTP
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))  # 465: TLS ngay từ đầu (smtplib.SMTP_SSL)
+SMTP_USER = os.getenv("SMTP_USER", "")
 
 # --- Embedding (tìm theo nghĩa) — BGE-M3 qua llama-server thứ hai: bash scripts/run_embedding_server.sh ---
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://127.0.0.1:9932/v1")
@@ -85,13 +94,3 @@ NLI_WARNINGS_VISIBLE = os.getenv("NLI_WARNINGS_VISIBLE", "false").lower() == "tr
 
 # README của langgraph-checkpoint-postgres: đọc lại checkpoint không giới hạn kiểu có thể bị lợi dụng chạy code.
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
-
-# --- Giám khảo cho bộ đo — chỉ dùng khi chạy bộ đo, không bao giờ trong app ---
-# Điểm chấm của giám khảo không bao giờ làm dữ liệu huấn luyện (quy tắc bất biến số 13).
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "claude-opus-5-5")
-
-# Giá USD/1M token, theo bảng giá trong skill claude-api (bản lưu 2026-10-06) — kiểm lại khi viết bộ đo.
-PRICES_USD_PER_MILLION_TOKENS = {
-    "claude-opus-5-5": {"input": 4.0, "output": 20.0},
-}

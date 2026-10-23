@@ -50,13 +50,13 @@
 - **Dữ liệu từ ngoài là không tin được:** ID văn bản phải khớp mẫu (`VALID_DOCUMENT_ID`), tên file đính kèm không được chứa ký tự đường dẫn (`safe_attachment_names`), link tải chỉ chấp nhận http/https của tên miền đã biết — trước khi dùng làm đường dẫn trên đĩa hay gọi mạng.
 - Chữ tiếng Việt chuẩn hóa NFC trước khi so khớp.
 
-## Web và API (chưa có — bước Trả lời và Giao diện)
+## Web và API
 
 - FastAPI + template Jinja2 render từ server; JS thuần chỉ khi cần tương tác trên trình duyệt. Không bước build.
 - Route chỉ nhận yêu cầu, kiểm đầu vào, gọi xuống tầng tìm kiếm/trả lời, rồi render. Không gọi model hay viết SQL trong route.
 - **Luồng trả lời bằng LangGraph:** mỗi bước là một node — hàm **async** nhận state (TypedDict) và trả dict chứa phần cập nhật (đúng chữ ký trong mã nguồn `StateGraph`). Async vì `TimeoutPolicy` dựa vào huỷ asyncio; node đồng bộ bị chặn thì timeout không chạy.
 - Node không ghi database giữa chừng; chỉ node cuối ghi `questions`/`answers`. Lý do: `interrupt` và thử lại chạy lại node từ đầu — tác dụng phụ trước đó sẽ bị lặp.
-- State chỉ chứa thứ cần cho các bước sau (ô hiểu câu hỏi, id các đoạn tìm được, bản nháp, kết quả guardrail) — không nhét cả văn bản luật vào state.
+- State chỉ chứa thứ cần cho các bước sau (ô hiểu câu hỏi, id các đoạn tìm được, bản nháp, kết quả guardrail) — không nhét cả văn bản luật vào state. **Ngoại lệ:** usage của mỗi lời gọi model mang theo `request` (đúng body gửi `llama-server`) và `output` (chữ model trả) để node cuối ghi `model_calls` — node không được ghi database giữa chừng, nên đây là đường duy nhất giữ được đúng ngữ cảnh model đã nhận. Debug không hiện hai ô này.
 - `RetryPolicy` chỉ cho lỗi kết nối (`llama-server`, Postgres), không thử lại khi model trả lời kém.
 - **Mọi lời gọi model gửi rõ thông số lấy mẫu** — không dựa vào mặc định của server. Viết câu trả lời: `config.LLM_ANSWER_TEMPERATURE` (0.4) + `LLM_TOP_P`, `LLM_TOP_K`, `LLM_SEED`, `LLM_ANSWER_MAX_TOKENS`; phân loại: `config.LLM_CLASSIFY_TEMPERATURE` (0). Không bật phạt lặp (`presence_penalty`, `repeat_penalty`) — làm sai chữ trong đoạn trích. Lý do và nguồn: `danh-gia.md`.
 - **Async trên Windows:** psycopg async không chạy với `ProactorEventLoop` mặc định của Windows (tài liệu psycopg) → chạy bằng `asyncio.run(..., loop_factory=asyncio.SelectorEventLoop)`.
@@ -64,6 +64,14 @@
 - **uvicorn trên Windows tự chọn `ProactorEventLoop`** (mã nguồn uvicorn 0.54, `loops/asyncio.py`) → không chạy `uvicorn` bằng dòng lệnh; chạy `uvicorn.Server(config).serve()` trong `asyncio.run(..., loop_factory=SelectorEventLoop)` (`app/web/server.py`).
 - Mỗi lúc chỉ chạy một câu hỏi (khoá `asyncio.Lock`): `llama-server` chạy `-np 1`, checkpointer dùng một kết nối Postgres.
 - Template Jinja2 tự thoát HTML (`autoescape`) — chữ văn bản luật và câu hỏi không bao giờ được chèn bằng `|safe`.
+- **Đăng nhập và phiên** (`architecture.md`, Truy cập và phân quyền):
+  - Route mới mặc định cần đăng nhập (middleware). Thêm đường dẫn công khai = sửa `PUBLIC_PATHS` trong `server.py`, có lý do.
+  - Route lấy người dùng từ `request.state.user`, không đọc cookie phiên trực tiếp.
+  - Mọi hàm đọc / ghi dữ liệu của người dùng nhận `user_id` và đặt nó vào `where` của câu SQL — không đọc rồi mới kiểm chủ trong Python.
+  - Form POST có ô ẩn `csrf`; `fetch` gửi header `X-CSRF-Token` (đọc từ `<meta name="csrf">`). Form đọc bằng `urllib.parse.parse_qs` của thư viện chuẩn — không thêm `python-multipart`.
+  - So mã bí mật bằng `hmac.compare_digest`. Sinh mã bằng `secrets`, không dùng `random`.
+  - Thông báo lỗi đăng nhập / đăng ký / OTP không cho biết email có tài khoản hay không.
+  - Không script / style nội tuyến trong template (CSP `'self'`): script để ở `static/`, dữ liệu cho JS đi qua `<script type="application/json">`.
 
 ## Tài liệu
 

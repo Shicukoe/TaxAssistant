@@ -38,6 +38,19 @@ Vì vậy project chọn: **chỉ lấy dữ liệu công khai và không vi ph�
 
 **Bộ lọc link có bỏ sót không** (đo 08/10/2026): sitemap trung ương có 46.898 văn bản, 3.168 qua bộ lọc link. Lấy ngẫu nhiên 150 văn bản bị loại, tải JSON kiểm: 3 văn bản (2%) có lĩnh vực "Quản lý thuế, phí và lệ phí" nhưng nội dung đều là phí/lệ phí — loại đã quyết định chưa lấy. Không văn bản nào có chữ "thuế" trong tiêu đề bị sót. Link vbpl.vn chứa nguyên tiêu đề, không bị cắt ngắn (dài nhất 1.177 ký tự), nên lọc theo link không làm rơi văn bản có "thuế" trong tên.
 
+**Mở rộng phạm vi: lệ phí môn bài, lệ phí trước bạ, phí và lệ phí, tiền sử dụng đất / thuê đất** (chốt 23/10/2026 — người dùng: "nhìn rộng ra về data có thiếu các nghị quyết liên quan thuế môn bài nhà đất"; thay quyết định "phí/lệ phí chưa lấy" ở đoạn trên). Mẹ hỏi "2026 còn phải nộp thuế môn bài không" — kho không có Nghị quyết 198/2025/QH15 (theo hiểu biết, **chưa kiểm** trên cổng: bãi bỏ lệ phí môn bài từ 01/01/2026) vì tên nó không nhắc thuế. Khảo sát sitemap trung ương (23/10/2026, 57.788 link):
+
+| Nhóm (mẫu trong link) | Link | Bộ lọc cũ bỏ sót |
+|---|---|---|
+| Môn bài (`mon-bai`) | 33 | 8 — gồm văn bản hợp nhất nghị định lệ phí môn bài |
+| Lệ phí trước bạ (`le-phi-truoc-ba`) | 83 | 80 |
+| Phí và lệ phí (`phi-va-le-phi`) | 52 | 49 |
+| Tiền sử dụng đất (`tien-su-dung-dat`) | 54 | 36 |
+| Tiền thuê đất, thuê mặt nước | 60 | 0 ở bộ lọc link — nhưng tiêu đề không có chữ "thuế" nên bị bộ lọc tiêu đề loại |
+| NQ 198/2025/QH15 + NĐ 20/2026/NĐ-CP hướng dẫn | 2 | 2 |
+
+Cách làm: bộ lọc link thêm bốn mẫu trên (không dùng `le-phi` chung — 814 link, phần lớn lệ phí cấp phép, đăng ký không liên quan); bộ lọc tiêu đề thêm "môn bài", "lệ phí trước bạ", "phí và lệ phí", "tiền sử dụng đất", "tiền thuê đất", "thuê mặt nước"; văn bản không mang tên thuế nhưng có điều khoản thuế quan trọng thêm bằng **danh sách cố định theo mã văn bản** (`EXTRA_TAX_DOCUMENTS` trong `download_moj_documents.py`, mỗi dòng ghi lý do). 174 văn bản mới cần tải. Không lấy: văn bản về hộ kinh doanh không nhắc thuế (đăng ký kinh doanh, chế độ kế toán — 20 link).
+
 **Cổng sửa văn bản sau khi đăng** (đo 15/10/2026): tải lại 20 văn bản còn hiệu lực đã lưu ngày 02/10 → 4 văn bản đổi nội dung HTML, 8 văn bản có trường nào đó đổi (phần lớn là `reviewStatus`), không văn bản nào đổi trạng thái hiệu lực. Có văn bản chỉ thêm markup (chữ y nguyên), có văn bản sửa chữ thật — Nghị định 41/2022/NĐ-CP khác 16 dòng ("KTH" → "KTTH", dấu ":" → ";"…). Vì vậy pipeline tải lại văn bản còn hiệu lực mỗi lần chạy và giữ bản cũ trong `history/`.
 
 **JSON của một văn bản có thể chứa văn bản khác** (đo 22/10/2026): JSON của Nghị định 125/2020/NĐ-CP (xử phạt về thuế) chứa **công văn đính chính 29/CP-KTTH**, không chứa nghị định; JSON của Thông tư 75/A-TC-TCT chứa nội dung số 74/A-TC-TCT. Phép kiểm thô "số hiệu có ở phần đầu văn bản không" gắn cờ 416/1.834 văn bản nhưng phần lớn là cảnh báo nhầm (văn bản cũ không có dòng "Số:", viết "SỐ", viết "73A-TC/TCT" thay vì "73/A-TC-TCT") — cần phép kiểm tốt hơn trước khi tin con số. Nội dung thật của NĐ 125/2020 có ở văn bản hợp nhất 27/2026/VBHN-NĐ-BTC (51 Điều).

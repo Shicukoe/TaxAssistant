@@ -11,7 +11,8 @@ from datetime import date
 from app import config
 from app.answer.call_local_model import ask_local_model_for_json
 
-TAX_TYPES = ["GTGT", "TNDN", "TNCN", "ho_kinh_doanh", "hoa_don", "quan_ly_thue_xu_phat", "xuat_nhap_khau", "khac"]
+TAX_TYPES = ["GTGT", "TNDN", "TNCN", "ho_kinh_doanh", "hoa_don", "quan_ly_thue_xu_phat", "xuat_nhap_khau", "le_phi",
+             "dat_dai", "khac"]
 QUESTION_KINDS = ["tra_cuu", "vi_pham", "so_sanh_thoi_gian", "ngoai_pham_vi"]
 # Hai loại nhận bằng quy tắc, rẽ nhánh riêng trong answer_graph (docs/architecture.md, Model AI) — model không gán.
 SMALL_TALK, CONCEPT = "chao_hoi", "khai_niem"
@@ -25,6 +26,8 @@ TAX_TYPE_KEYWORDS = {
     "TNDN": ["tndn", "thu nhap doanh nghiep"],
     "TNCN": ["tncn", "thu nhap ca nhan"],
     "xuat_nhap_khau": ["xuat khau", "nhap khau", "hai quan", "mien thue hang"],
+    "le_phi": ["mon bai", "le phi", "truoc ba"],
+    "dat_dai": ["su dung dat", "thue dat", "tien dat", "nha dat", "phi nong nghiep", "mat nuoc"],
 }
 VIOLATION_KEYWORDS = ["xu phat", "bi phat", "phat ", "vi pham", "cham nop", "nop cham", "khai cham"]
 COMPARISON_KEYWORDS = ["so sanh", "khac nhau", "truoc va sau", "thay doi"]
@@ -70,9 +73,11 @@ CLASSIFY_PROMPT = (
     "Phân loại câu hỏi về thuế Việt Nam. Chỉ trả JSON theo schema.\n"
     "loai_thue: GTGT = thuế giá trị gia tăng; TNDN = thuế thu nhập doanh nghiệp; TNCN = thuế thu nhập cá nhân; "
     "ho_kinh_doanh = hộ, cá nhân kinh doanh; hoa_don = hoá đơn, chứng từ; quan_ly_thue_xu_phat = kê khai, nộp thuế, "
-    "xử phạt; xuat_nhap_khau = thuế xuất khẩu, nhập khẩu; khac = loại khác. Chỉ chọn loại câu hỏi thật sự nhắc tới.\n"
+    "xử phạt; xuat_nhap_khau = thuế xuất khẩu, nhập khẩu; le_phi = lệ phí môn bài, lệ phí trước bạ, phí và lệ phí; "
+    "dat_dai = thuế sử dụng đất, tiền sử dụng đất, tiền thuê đất; khac = loại khác. "
+    "Chỉ chọn loại câu hỏi thật sự nhắc tới.\n"
     "loai_cau_hoi: tra_cuu = hỏi quy định; vi_pham = hỏi bị phạt, xử lý vi phạm; so_sanh_thoi_gian = so quy định "
-    "giữa các thời điểm; ngoai_pham_vi = không phải câu hỏi về thuế."
+    "giữa các thời điểm; ngoai_pham_vi = không phải câu hỏi về thuế, phí, lệ phí, tiền sử dụng đất, tiền thuê đất."
 )
 
 
@@ -85,8 +90,9 @@ def remove_diacritics(text: str) -> str:
 def find_as_of_date(question: str, today: date) -> tuple[date | None, str]:
     """Mốc thời gian theo quy tắc. Trả (ngày, nguồn); không đọc được → (None, '').
 
-    'năm 2025' / '2025' → 31/12/2025 (cách quy đổi năm → ngày: chưa chốt). Có nhiều mốc → lấy mốc sau cùng
-    (bản demo chưa so sánh nhiều mốc).
+    'năm 2025' / '2025' → 31/12/2025; năm hiện tại → hôm nay (31/12 của năm hiện tại có thể đã sau ngày hết hiệu lực
+    của văn bản đang áp dụng — docs/architecture.md, Hiểu câu hỏi). Có nhiều mốc → lấy mốc sau cùng (bản demo chưa so
+    sánh nhiều mốc).
     """
     plain = remove_diacritics(question)
     full_dates = re.findall(r"\b(\d{1,2})[/-](\d{1,2})[/-]((?:19|20)\d{2})\b", plain)
@@ -95,6 +101,8 @@ def find_as_of_date(question: str, today: date) -> tuple[date | None, str]:
         return date(int(year), int(month), int(day)), "ngay_trong_cau_hoi"
     years = re.findall(r"\b((?:19|20)\d{2})\b", plain)
     if years:
+        if int(years[-1]) == today.year:
+            return today, "nam_hien_tai"
         return date(int(years[-1]), 12, 31), "nam_trong_cau_hoi"
     if re.search(r"hien nay|hien hanh|bay gio|hien tai", plain):
         return today, "hien_hanh"
@@ -130,7 +138,7 @@ async def understand_question(state: dict) -> dict:
             "tax_types": [], "question_kind": simple_kind, "concept_term": concept_term,
             "label_source": "quy_tac", "search_text": question, "understand_usage": [],
             # đặt lại mỗi lượt: khái niệm không thấy định nghĩa → tìm thường, không qua split_question
-            "search_parts": [question], "split_usage": [],
+            "search_parts": [question], "split_usage": [], "calendar_notes": [],
         }
     tax_types, kind = match_keywords(question)
     usage = []
@@ -169,5 +177,22 @@ async def understand_question(state: dict) -> dict:
         "label_source": label_source,
         "search_text": search_text,
         "search_parts": [search_text],  # split_question ghi đè nếu tách
+        "calendar_notes": [],  # add_deadline_rule ghi đè nếu câu hỏi về thời hạn
         "understand_usage": usage,
     }
+
+
+def self_check() -> None:
+    today = date(2026, 10, 23)
+    assert find_as_of_date("năm 2026 có được gia hạn nộp thuế GTGT", today) == (today, "nam_hien_tai")
+    assert find_as_of_date("thuế suất năm 2025", today) == (date(2025, 12, 31), "nam_trong_cau_hoi")
+    assert find_as_of_date("hạn nộp ngày 5/3/2025", today) == (date(2025, 3, 5), "ngay_trong_cau_hoi")
+    assert find_as_of_date("thuế suất hiện nay", today) == (today, "hien_hanh")
+    assert find_as_of_date("thuế suất là bao nhiêu", today) == (None, "")
+    assert match_keywords("2026 còn phải nộp thuế môn bài ko")[0] == ["le_phi"]
+    assert "dat_dai" in match_keywords("hạn cuối nộp thuế sử dụng đất phi nông nghiệp")[0]
+    print("PASS")
+
+
+if __name__ == "__main__":
+    self_check()

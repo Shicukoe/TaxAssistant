@@ -65,8 +65,8 @@ Ba màn hình:
 
 1. **Hỏi – đáp:** các lượt hỏi–đáp của cuộc hội thoại đang mở, xếp từ trên xuống; ô nhập + dòng nhắc bên dưới; mỗi câu trả lời có danh sách căn cứ riêng; nút **cuộc hội thoại mới** (bỏ ngữ cảnh lượt trước). Khi câu hỏi nối tiếp mang ngữ cảnh từ lượt trước, hiện rõ ngữ cảnh đã dùng (ví dụ "hộ kinh doanh · thuế GTGT · mốc 2026").
 2. **Lịch sử:** các cuộc hội thoại đã có, mở lại được từng lượt hỏi–đáp.
-3. **Hiệu năng** (thay trang chi phí từ 21/10/2026): thời gian trả lời, số câu đã hỏi, bộ nhớ GPU. Làm 23/10/2026 (`/hieu-nang`): số câu (tổng, hôm nay, 7 ngày); thời gian trả lời trung vị và chậm nhất 10% theo nhánh (chào hỏi / khái niệm / câu hỏi thường) — đo từ lúc nhận câu hỏi tới lúc lưu, câu trả lời trước 23/10/2026 không có số này; 20 câu gần nhất; bộ nhớ GPU; tốc độ đọc và sinh trung bình của model viết. Ai trong mạng nhà cũng xem được — không có chữ câu trả lời, chỉ có câu hỏi.
-**Bản demo đầu (22/10/2026, `bash scripts/run_web_demo.sh`):** có Hỏi (hội thoại nhiều lượt, nút cuộc hội thoại mới, tiến độ từng bước) và Tra cứu (danh sách + trang văn bản + bản gốc). Chưa có: nút báo sai, lọc theo loại thuế (danh sách loại thuế chưa chốt). **Khung debug** (kết quả từng bước, như bản terminal) chỉ hiện khi mở trên chính laptop (`127.0.0.1`), máy khác trong mạng không thấy.
+3. **Hiệu năng** (thay trang chi phí từ 21/10/2026): thời gian trả lời, số câu đã hỏi, bộ nhớ GPU. Làm 23/10/2026 (`/hieu-nang`): số câu (tổng, hôm nay, 7 ngày); thời gian trả lời trung vị và chậm nhất 10% theo nhánh (chào hỏi / khái niệm / câu hỏi thường) — đo từ lúc nhận câu hỏi tới lúc lưu, câu trả lời trước 23/10/2026 không có số này; 20 câu gần nhất; bộ nhớ GPU; tốc độ đọc và sinh trung bình của model viết. Ai đăng nhập cũng xem được; số đếm và thời gian tính trên mọi tài khoản, danh sách câu gần đây chỉ có câu của người đang xem (từ 23/10/2026).
+**Bản demo đầu (22/10/2026, `bash scripts/run_web_demo.sh`):** có Hỏi (hội thoại nhiều lượt, nút cuộc hội thoại mới, tiến độ từng bước) và Tra cứu (danh sách + trang văn bản + bản gốc). Chưa có: nút báo sai, lọc theo loại thuế (danh sách loại thuế chưa chốt). **Khung debug** (kết quả từng bước, như bản terminal) chỉ hiện cho tài khoản quản trị (`is_admin`, từ 23/10/2026 — trước đó theo địa chỉ `127.0.0.1`, không còn đúng sau `tailscale serve`).
 
 4. **Tra cứu** (chốt 22/10/2026) — đọc thẳng, không qua model:
    - **Danh sách:** lọc theo thứ bậc văn bản (`thu-bac-van-ban.md`), loại thuế, hiệu lực tại một ngày, có ô tìm theo số hiệu / chữ. Văn bản hợp nhất đứng trước văn bản gốc.
@@ -74,6 +74,13 @@ Ba màn hình:
    - **Nút báo sai** trên trang văn bản → danh sách chờ xem tay.
 
 Bố cục: xem Phong cách (chốt 23/10/2026).
+
+5. **Tài khoản** (chốt 23/10/2026) — trang đơn, cùng màu và chữ, không thanh bên:
+   - **Đăng nhập:** email, mật khẩu; link **Đăng ký** và **Quên mật khẩu**.
+   - **Đăng ký / Quên mật khẩu:** bước 1 nhập email → "Nếu email hợp lệ, mã đã được gửi — xem hộp thư (cả mục Spam)"; bước 2 nhập mã 6 số (+ tên hiển thị khi đăng ký) + mật khẩu mới (từ 12 ký tự). Xong → về trang đăng nhập với dòng "Đã tạo tài khoản" / "Đã đổi mật khẩu".
+   - Thanh bên dưới cùng: tên người đăng nhập + nút **Đăng xuất**.
+   - Mỗi cuộc hội thoại ở thanh bên có nút **Xoá khỏi danh sách** (chỉ ẩn, hiện khi rê chuột / luôn hiện trên điện thoại).
+   - Dưới mỗi câu trả lời (cạnh nút Sao chép): **Đúng · Sai · Chưa đủ**; bấm Sai / Chưa đủ thì mở ô ghi chú ngắn ("sai chỗ nào, đúng phải là gì"); bấm **Lưu ghi chú** → ô đóng lại, ghi chú đã lưu hiện thành một dòng nhỏ dưới các nút (người dùng yêu cầu 23/10/2026). Mở lại trang: ô đóng, dòng ghi chú vẫn hiện. Đã chấm thì nút đó sáng; bấm lại Sai / Chưa đủ để sửa ghi chú.
 
 ## Thành phần bắt buộc
 

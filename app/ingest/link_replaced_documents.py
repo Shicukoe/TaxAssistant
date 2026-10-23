@@ -1,11 +1,13 @@
-"""Đọc câu "… hết hiệu lực kể từ …", "… này thay thế / bãi bỏ …" trong Điều hiệu lực của văn bản mới → quan hệ thay_the / bai_bo (docs/architecture.md, Model AI).
+"""Đọc câu "… hết hiệu lực kể từ …", "… này thay thế / bãi bỏ …" trong Điều hiệu lực của văn bản mới → quan hệ
+thay_the / bai_bo; câu "Chấm dứt việc thu, nộp …" → quan hệ cham_dut (docs/architecture.md, Model AI — Khoản thu bị
+chấm dứt).
 
 Chạy (sau save_to_database; trong pipeline: công đoạn replaced_links):
     python -m app.ingest.link_replaced_documents
     python -m app.ingest.link_replaced_documents --check     (bài tự kiểm, không cần database)
 
 Cổng Bộ Tư pháp không ghi ngày hết hiệu lực cho Luật Quản lý thuế 38/2019 dù Luật 108/2025 (khoản 3 Điều 52) ghi
-"Luật Quản lý thuế số 38/2019/QH14 … hết hiệu lực thi hành kể từ ngày Luật này có hiệu lực thi hành". Ba dạng câu:
+"Luật Quản lý thuế số 38/2019/QH14 … hết hiệu lực thi hành kể từ ngày Luật này có hiệu lực thi hành". Bốn dạng câu:
   1. "<Loại> … số <số hiệu> … hết hiệu lực [thi hành] [kể từ ngày <Loại> này có hiệu lực | kể từ ngày dd tháng mm năm yyyy]"
   2. "Kể từ ngày <Loại> này có hiệu lực thi hành, <Loại> số <số hiệu> … hết hiệu lực"
   3. "Kể từ ngày …, các Nghị định sau đây hết hiệu lực thi hành:" + các dòng "a) Nghị định số …"
@@ -59,6 +61,21 @@ SOURCE_SQL = """
     join provisions p on p.id = ch.dieu_provision_id
     where d.doc_group <> 'VBHN' and d.text_origin = 'native' and ch.text ~ 'hết hiệu lực|này thay thế|này bãi bỏ'
       and lower(f_unaccent(coalesce(p.ten, ''))) ~ 'hieu luc|thi hanh|chuyen tiep'"""
+# "Chấm dứt việc thu, nộp lệ phí môn bài từ ngày 01 tháng 01 năm 2026" (khoản 7 Điều 10 NQ 198/2025/QH15): không nêu số
+# hiệu → văn bản bị chấm dứt là văn bản có tên chứa đúng khoản thu đó, ban hành trước văn bản tuyên bố. Câu nằm trong
+# Điều chính sách, không trong Điều hiệu lực → nguồn riêng.
+CEASED = re.compile(r"Chấm dứt (?:việc )?thu,? nộp (?P<subject>[^.;:,]{3,80}?) (?:kể )?từ ngày\s+(?P<day>\d{1,2})\s+tháng"
+                    r"\s+(?P<month>\d{1,2})\s+năm\s+(?P<year>\d{4})")
+CEASED_SOURCE_SQL = """
+    select d.id::text, d.so_hieu, d.ngay_ban_hanh, ch.id, ch.text, p.level, p.so
+    from chunks ch
+    join documents d on d.id = ch.document_id
+    join provisions p on p.id = ch.dieu_provision_id
+    where d.doc_group <> 'VBHN' and d.text_origin = 'native' and ch.text ~ 'Chấm dứt (việc )?thu,? nộp'"""
+CEASED_TARGETS_SQL = """
+    select id::text from documents
+    where lower(coalesce(tieu_de, '')) like '%%' || %(subject)s || '%%' and ngay_ban_hanh < %(issued)s
+      and id <> %(source)s::uuid"""
 
 
 def subject_numbers(text: str) -> list[str]:
@@ -137,6 +154,43 @@ def read_statements(text: str, own_effective_from: date | None) -> list[dict]:
     return found
 
 
+def read_ceased(text: str) -> list[dict]:
+    """Câu "Chấm dứt (việc) thu, nộp <khoản thu> từ ngày …": khoản thu (chữ thường), ngày, vị trí ký tự, nguyên văn."""
+    found = []
+    for match in CEASED.finditer(text):
+        sentence_end = text.find("\n", match.end())
+        found.append({"subject": match["subject"].strip().lower(), "position": match.start(),
+                      "date": date(int(match["year"]), int(match["month"]), int(match["day"])),
+                      "quote": text[match.start():sentence_end if sentence_end >= 0 else len(text)].strip()})
+    return found
+
+
+def clause_label(conn: psycopg.Connection, chunk_id: int, level: str, number: str, position: int) -> str:
+    """'khoản 7 Điều 10' — khoản chứa vị trí ký tự `position` của Điều."""
+    clause = conn.execute(
+        "select so from chunk_positions where chunk_id = %s and level = 'khoan' "
+        "and char_start <= %s and %s < char_end order by char_end - char_start limit 1",
+        (chunk_id, position, position)).fetchone()
+    label = provision_label(level, number)
+    return f"khoản {clause[0]} {label}" if clause else label
+
+
+def ceased_relations(conn: psycopg.Connection, report: StageReport) -> list[tuple]:
+    relations = []
+    for document_id, so_hieu, issued, chunk_id, text, level, number in conn.execute(CEASED_SOURCE_SQL).fetchall():
+        try:
+            for statement in read_ceased(text):
+                targets = [row[0] for row in conn.execute(CEASED_TARGETS_SQL, {
+                    "subject": statement["subject"], "issued": issued, "source": document_id})]
+                label = clause_label(conn, chunk_id, level, number, statement["position"])
+                report.count("quan_he_cham_dut", len(targets))
+                relations += [(document_id, target, statement["subject"], "cham_dut", statement["date"], label,
+                               statement["quote"][:1000], False) for target in targets]
+        except Exception as e:  # một văn bản lỗi không chặn văn bản khác (quy tắc bất biến số 11)
+            report.fail(so_hieu, e, log)
+    return relations
+
+
 def link_replaced_documents() -> StageReport:
     report = StageReport("replaced_links")
     with psycopg.connect(config.DATABASE_CONNECTION) as conn:
@@ -157,20 +211,16 @@ def link_replaced_documents() -> StageReport:
                     if len(candidates) > 1:
                         report.count("so_hieu_trung_khong_phan_biet_duoc")
                         continue
-                    clause = conn.execute(
-                        "select so from chunk_positions where chunk_id = %s and level = 'khoan' "
-                        "and char_start <= %s and %s < char_end order by char_end - char_start limit 1",
-                        (chunk_id, statement["position"], statement["position"])).fetchone()
-                    label = provision_label(level, number)
-                    label = f"khoản {clause[0]} {label}" if clause else label
+                    label = clause_label(conn, chunk_id, level, number, statement["position"])
                     report.count(f"quan_he_{statement['kind']}" if candidates else "van_ban_bi_thay_chua_co_trong_kho")
                     relations.append((document_id, candidates[0] if candidates else None, statement["number"],
                                       statement["kind"],
                                       statement["date"], label, statement["quote"][:1000], statement["has_exceptions"]))
             except Exception as e:  # một văn bản lỗi không chặn văn bản khác (quy tắc bất biến số 11)
                 report.fail(so_hieu, e, log)
+        relations += ceased_relations(conn, report)
         with conn.transaction():
-            conn.execute("delete from document_relations where relation_type in ('thay_the', 'bai_bo')")
+            conn.execute("delete from document_relations where relation_type in ('thay_the', 'bai_bo', 'cham_dut')")
             conn.cursor().executemany(
                 "insert into document_relations (from_doc, to_doc, to_doc_ref, relation_type, evidence, confidence, "
                 "effective_from, source_label, quote, has_exceptions) "
@@ -232,6 +282,12 @@ def self_check() -> None:
     assert statement["date"] == date(2009, 1, 1), statement
     [statement] = read_statements("2. Nghị định này thay thế Nghị định số 83/2013/NĐ-CP ngày 22 tháng 7 năm 2013.", effect)
     assert (statement["number"], statement["kind"], statement["date"]) == ("83/2013/NĐ-CP", "thay_the", effect)
+    text = ("6. Hộ kinh doanh, cá nhân kinh doanh không áp dụng phương pháp khoán thuế từ ngày 01 tháng 01 năm 2026.\n"
+            "7. Chấm dứt việc thu, nộp lệ phí môn bài từ ngày 01 tháng 01 năm 2026.\n8. Miễn thu phí, lệ phí …")
+    [ceased] = read_ceased(text)
+    assert (ceased["subject"], ceased["date"]) == ("lệ phí môn bài", date(2026, 1, 1)), ceased
+    assert text[ceased["position"]:].startswith("Chấm dứt") and ceased["quote"].endswith("năm 2026.")
+    assert read_ceased("Chấm dứt hiệu lực mã số thuế đối với người nộp thuế") == []
     print("PASS")
 
 

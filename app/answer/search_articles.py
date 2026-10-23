@@ -16,7 +16,7 @@ from app import config
 from app.answer.call_local_model import embed_texts
 from app.answer.understand_question import remove_diacritics
 
-RESULT_LIMIT = 4
+RESULT_LIMIT = 5  # khớp chỉ số đo recall@5 (measure_search) — đưa model đúng số Điều đã đo
 # Câu hỏi nhiều ý (split_question): mỗi ý lấy tối đa PER_PART Điều, lần lượt từng ý, tổng tối đa MAX_SPLIT_RESULTS
 PER_PART = 2
 MAX_SPLIT_RESULTS = 8
@@ -55,12 +55,17 @@ NEEDS_VALIDITY_CHECK_SQL = """(d.doc_group <> 'VBHN' and d.eff_to is null
 REPLACED_BY_SQL = """(
     select jsonb_build_object('tu_ngay', x.effective_from, 'theo_loai', n.loai, 'theo_so_hieu', n.so_hieu,
                               'vi_tri', x.source_label, 'con_ngoai_le', x.has_exceptions,
-                              'van_ban_bi_thay', case when o.id <> d.id then o.so_hieu end)
+                              'van_ban_bi_thay', case when o.id <> d.id then o.so_hieu end,
+                              'loai_quan_he', x.relation_type, 'nguyen_van', x.quote, 'theo_id', n.id::text)
     from document_replacements x
     join documents n on n.id = x.replaced_by
     join documents o on o.id = x.replaced_document
     where x.document_id = d.id and x.effective_from <= %(as_of)s
     order by x.effective_from desc limit 1)"""
+# Văn bản chỉ áp dụng trong một năm: tiêu đề "… trong năm 2024" (nghị định gia hạn nộp thuế hằng năm) mà cổng không ghi
+# ngày hết hiệu lực → hết hiệu lực từ 01/01 năm sau. Cổng có ghi thì dùng ngày của cổng (docs/architecture.md, Model AI).
+YEAR_ONLY_END_SQL = r"""(case when d.eff_to is null and d.tieu_de ~ 'trong năm \d{4}'
+         then make_date(substring(d.tieu_de from 'trong năm (\d{4})')::int + 1, 1, 1) end)"""
 # Cột chung của hai đường tìm. uu_tien = thứ bậc × hệ số OCR, nhân vào điểm sau khi gộp (RRF chỉ dùng thứ hạng).
 SELECT_COLUMNS = f"""
     ch.id as chunk_id, d.id::text as document_id, d.so_hieu, d.tieu_de, d.loai, d.text_origin, d.source_url,
@@ -76,9 +81,10 @@ FROM_SQL = """
     -- văn bản bị cách ly (docs/architecture.md, lớp 2) vẫn tìm được, nhưng check_citations không trích
     left join quarantined_documents qd on qd.document_id = d.id"""
 # Bộ lọc chung: dùng được tại mốc hỏi. Giống nhau cho từ khoá và theo nghĩa — hai đường không được lệch nhau.
-FILTER_SQL = """
+FILTER_SQL = f"""
           (d.eff_from is null or d.eff_from <= %(as_of)s)
       and (d.eff_to is null or d.eff_to > %(as_of)s)
+      and ({YEAR_ONLY_END_SQL} is null or {YEAR_ONLY_END_SQL} > %(as_of)s)
       -- coalesce: trạng thái trống (NULL) làm cả điều kiện thành NULL → dòng bị loại; phần lớn văn bản hợp nhất
       -- không ghi trạng thái.
       and not (coalesce(d.eff_status_code, '') = 'HHL' and d.eff_to is null)
@@ -187,6 +193,9 @@ def expiry_note(replaced: dict) -> str:
     """Nhãn cho người đọc: 'Đã hết hiệu lực từ 01/07/2026 theo khoản 3 Điều 52 Luật 108/2025/QH15 …'."""
     day = replaced["tu_ngay"]
     day = date.fromisoformat(day) if isinstance(day, str) else day
+    if replaced.get("loai_quan_he") == "cham_dut":  # khoản thu bị chấm dứt — câu tuyên bố không nêu số hiệu văn bản này
+        return (f"Không còn áp dụng từ {day:%d/%m/%Y} theo {replaced['vi_tri']} {replaced['theo_loai']} "
+                f"{replaced['theo_so_hieu']}: \"{replaced['nguyen_van']}\"")
     whose = "" if replaced["van_ban_bi_thay"] is None else f" (bản hợp nhất của {replaced['van_ban_bi_thay']})"
     note = (f"Đã hết hiệu lực từ {day:%d/%m/%Y}{whose} theo {replaced['vi_tri']} {replaced['theo_loai']} "
             f"{replaced['theo_so_hieu']} — cổng dữ liệu chưa ghi ngày hết hiệu lực")
@@ -227,9 +236,22 @@ async def search_articles(state: dict) -> dict:
     parts = state.get("search_parts") or [state["search_text"]]
     found = [await search(part, state["as_of_date"]) for part in parts]
     vector_error = next((error for _, error in found if error), None)
-    if len(parts) == 1:
-        return {"articles": found[0][0][:RESULT_LIMIT], "search_warning": vector_error}
-    return {"articles": interleave([results for results, _ in found]), "search_warning": vector_error}
+    articles = found[0][0][:RESULT_LIMIT] if len(parts) == 1 else interleave([results for results, _ in found])
+    return {"articles": articles, "search_warning": vector_error, "ceased_sources": ceased_sources(found)}
+
+
+def ceased_sources(found: list[tuple[list[dict], str | None]]) -> list[dict]:
+    """Chỗ tuyên bố chấm dứt khoản thu của MỌI ứng viên tìm được, kể cả ngoài các Điều đưa model — văn bản bị chấm dứt
+    xếp cuối nên thường bị cắt, còn Điều tuyên bố dài, gom nhiều chính sách nên ít khi tự lên top (docs/architecture.md,
+    Khoản thu bị chấm dứt). add_referenced_articles kéo đúng khoản đó vào ngữ cảnh."""
+    sources = {}
+    for results, _ in found:
+        for article in results:
+            replaced = article.get("het_hieu_luc") or {}
+            if replaced.get("loai_quan_he") == "cham_dut":
+                sources.setdefault((replaced["theo_id"], replaced["vi_tri"]), {
+                    "document_id": replaced["theo_id"], "vi_tri": replaced["vi_tri"]})
+    return list(sources.values())
 
 
 async def load_chunk_texts(chunk_ids: list[int]) -> dict[int, str]:

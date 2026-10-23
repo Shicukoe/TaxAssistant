@@ -1,8 +1,8 @@
 """Chỗ duy nhất gọi model (quy tắc bất biến số 7): llama-server qua API kiểu OpenAI — model viết (cổng 9931)
 và model embedding BGE-M3 (cổng 9932).
 
-Trả về nội dung cùng usage (token, thời gian chạy) để bước cuối của luồng ghi vào usage_log —
-node không ghi database giữa chừng (docs/code-standards.md).
+Trả về nội dung cùng usage (token, thời gian chạy; request gửi đi và chữ model trả) để bước cuối của luồng ghi
+usage_log và model_calls — node không ghi database giữa chừng (docs/code-standards.md).
 """
 
 import json
@@ -43,6 +43,8 @@ async def ask_local_model(
         "input_tokens": result["usage"]["prompt_tokens"],
         "output_tokens": result["usage"]["completion_tokens"],
         "duration_ms": duration_ms,
+        "request": body,
+        "output": choice["message"]["content"],
     }
     return choice["message"]["content"], usage
 
@@ -89,11 +91,14 @@ async def stream_local_model_json(messages: list[dict], json_schema: dict, *, te
                         on_text("".join(pieces))
     if finish_reason == "length":
         raise ModelOutputCutError(f"model chạm max_tokens={max_tokens}")
-    return json.loads("".join(pieces)), {
+    output = "".join(pieces)
+    return json.loads(output), {
         "model": config.LLM_MODEL,
         "input_tokens": (usage or {}).get("prompt_tokens", 0),
         "output_tokens": (usage or {}).get("completion_tokens", 0),
         "duration_ms": round((time.perf_counter() - started) * 1000),
+        "request": body,
+        "output": output,
     }
 
 

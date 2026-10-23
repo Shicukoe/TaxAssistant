@@ -59,10 +59,19 @@ MAX_CONSECUTIVE_FAILURES = 10
 RETRY_WAIT_SECONDS = (5, 15)
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
-# Lọc thô trên link (không dấu) nên "thue" khớp cả "thuê bao", "cho thuê".
-TAX_WORDS_IN_URL = re.compile(r"thue|hoa-don")
+# Lọc thô trên link (không dấu) nên "thue" khớp cả "thuê bao", "cho thuê". Lệ phí môn bài, trước bạ, phí và lệ phí,
+# tiền sử dụng đất: tên không có chữ "thuế" (docs/nguon-du-lieu.md, Mở rộng phạm vi). Không lọc "le-phi" chung —
+# phần lớn là lệ phí cấp phép, đăng ký không liên quan.
+TAX_WORDS_IN_URL = re.compile(r"thue|hoa-don|mon-bai|le-phi-truoc-ba|phi-va-le-phi|tien-su-dung-dat")
 # Lọc chính xác, có dấu. "hóa"/"hoá" là hai cách bỏ dấu đều gặp trong văn bản thật.
-TAX_WORDS_IN_TITLE = re.compile(r"thuế|hóa đơn|hoá đơn", re.IGNORECASE)
+TAX_WORDS_IN_TITLE = re.compile(
+    r"thuế|hóa đơn|hoá đơn|môn bài|lệ phí trước bạ|phí và lệ phí|tiền sử dụng đất|tiền thuê đất|thuê mặt nước",
+    re.IGNORECASE)
+# Văn bản không mang tên thuế nhưng có điều khoản thuế quan trọng — thêm theo mã văn bản trên cổng, ghi lý do.
+EXTRA_TAX_DOCUMENTS = {
+    "177591": "Nghị quyết 198/2025/QH15 (phát triển kinh tế tư nhân) — bãi bỏ lệ phí môn bài",
+    "90a27d30-5b08-11f1-aee6-0d430505fd57": "Nghị định 20/2026/NĐ-CP hướng dẫn Nghị quyết 198/2025/QH15",
+}
 # Chỉ chấp nhận đúng hai dạng ID đã thấy — ID đi thẳng vào tên file.
 VALID_DOCUMENT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+")
 SITEMAP_XML_NAMESPACE = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
@@ -90,6 +99,8 @@ def is_tax_document(doc: dict) -> bool:
     Cần cả hai: văn bản mới có trường lĩnh vực nhưng tiêu đề có thể không nhắc thuế;
     văn bản cũ thì lĩnh vực để trống.
     """
+    if doc.get("id") in EXTRA_TAX_DOCUMENTS:
+        return True
     texts = [doc.get("title") or ""] + [f.get("name") or "" for f in doc.get("documentFields") or []]
     return any(TAX_WORDS_IN_TITLE.search(unicodedata.normalize("NFC", t)) for t in texts)
 
@@ -290,7 +301,7 @@ def update_document_list() -> StageReport:
         for loc in root.iterfind("s:url/s:loc", SITEMAP_XML_NAMESPACE):
             url = loc.text.strip()
             doc_id = document_id_from_url(url)
-            if doc_id and TAX_WORDS_IN_URL.search(url):
+            if doc_id and (TAX_WORDS_IN_URL.search(url) or doc_id in EXTRA_TAX_DOCUMENTS):
                 found.setdefault(doc_id, url)
         log.info("sitemap %s.xml: %d ứng viên", n, len(found))
     if report.failure_count == len(numbers):
@@ -371,6 +382,10 @@ def self_check() -> None:
     assert is_tax_document({"title": "Thông tư 136/2026", "documentFields": [{"name": "Thuế tiêu thụ đặc biệt"}]})
     assert not is_tax_document({"title": "Hướng dẫn xác thực thông tin thuê bao di động", "documentFields": None})
     assert not is_tax_document({"title": "Khung giá cho thuê nhà lưu trú công nhân"})
+    assert is_tax_document({"title": "Nghị định quy định về lệ phí trước bạ"})
+    assert is_tax_document({"title": "Nghị định quy định về tiền sử dụng đất, tiền thuê đất"})
+    assert is_tax_document({"id": "177591", "title": "Nghị quyết về phát triển kinh tế tư nhân"}), "danh sách cố định"
+    assert not is_tax_document({"title": "Nghị định quy định lệ phí cấp giấy phép xây dựng"})
     assert is_in_force({"effStatus": {"code": "CHL"}}) and not is_in_force({"effStatus": {"code": "HHL"}})
 
     # Đúng khung HTML rỗng 83 ký tự thấy trên cổng.

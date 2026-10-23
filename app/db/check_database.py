@@ -17,6 +17,13 @@ EXPECTED_TABLES = [
     "questions",
     "answers",
     "usage_log",
+    "users",
+    "sessions",
+    "email_codes",
+    "login_attempts",
+    "conversations",
+    "model_calls",
+    "answer_feedback",
 ]
 
 
@@ -151,6 +158,11 @@ def check_constraints_reject_bad_data(conn: psycopg.Connection) -> None:
     # chèn 0 dòng, không vi phạm gì, và bài kiểm báo sai là constraint không cắn.
     temp_document = """with d as (insert into documents (source, source_url, doc_group)
                                   values ('selfcheck', 'x', 'VBQPPL') returning id)"""
+    temp_user = """u as (insert into users (email, display_name, password_hash)
+                         values ('selfcheck@example.invalid', 'x', '$argon2id$x') returning id)"""
+    temp_question = "q as (insert into questions (text) values ('selfcheck') returning id)"
+    temp_answer = f"""{temp_question}, a as (insert into answers (question_id, text, model, has_cause)
+                                            select id, 'x', 'm', false from q returning id)"""
     cases = [
         (
             "khoản không được có tên (Luật 64/2025 Điều 7 khoản 2)",
@@ -170,13 +182,54 @@ def check_constraints_reject_bad_data(conn: psycopg.Connection) -> None:
                                        footnote_text)
                select id, 'cum_tu', 'ref', 'fn' from d""",
         ),
+        (
+            "email của tài khoản lưu chữ thường (so khớp không phân biệt hoa thường)",
+            """insert into users (email, display_name, password_hash)
+               values ('Me@Example.vn', 'x', '$argon2id$x')""",
+        ),
+        (
+            "mật khẩu chỉ lưu dạng băm Argon2id, không bao giờ dạng gốc",
+            """insert into users (email, display_name, password_hash)
+               values ('me@example.vn', 'x', 'mat-khau-goc')""",
+        ),
+        (
+            "phiên chỉ lưu SHA-256 (32 byte) của mã, không lưu mã",
+            f"""with {temp_user}
+               insert into sessions (token_sha256, user_id, csrf_token, expires_at)
+               select convert_to('ma-phien-goc', 'UTF8'), id, repeat('x', 32), now() from u""",
+        ),
+        (
+            "mã OTP chỉ có hai mục đích: dang_ky | dat_lai_mat_khau",
+            """insert into email_codes (email, purpose, expires_at) values ('me@example.vn', 'khac', now())""",
+        ),
+        (
+            "mã OTP chỉ lưu HMAC-SHA256 (32 byte)",
+            """insert into email_codes (email, purpose, code_hmac, expires_at)
+               values ('me@example.vn', 'dang_ky', convert_to('123456', 'UTF8'), now())""",
+        ),
+        (
+            "câu hỏi chỉ nằm trong cuộc hội thoại đã có (có chủ hoặc từ terminal)",
+            """insert into questions (text, thread_id) values ('selfcheck', 'khong-ton-tai')""",
+        ),
+        (
+            "model_calls.request phải có messages (đúng ngữ cảnh model đã nhận)",
+            f"""with {temp_question}
+               insert into model_calls (question_id, step, model, request, output)
+               select id, 'write_answer', 'm', '{{}}'::jsonb, 'x' from q""",
+        ),
+        (
+            "đánh giá chỉ nhận dung | sai | chua_du",
+            f"""with {temp_answer}, {temp_user}
+               insert into answer_feedback (answer_id, user_id, verdict)
+               select a.id, u.id, 'tot' from a, u""",
+        ),
     ]
     for label, sql in cases:
         try:
             with conn.transaction():
                 conn.execute(sql)
                 raise AssertionError(f"constraint KHÔNG cắn: {label}")
-        except (psycopg.errors.CheckViolation, psycopg.errors.NotNullViolation):
+        except (psycopg.errors.CheckViolation, psycopg.errors.NotNullViolation, psycopg.errors.ForeignKeyViolation):
             pass
     print(f"ok  {len(cases)} constraint đều cắn")
 

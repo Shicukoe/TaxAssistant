@@ -6,6 +6,8 @@ const input = document.getElementById("question");
 const sendButton = document.getElementById("ask-button");
 const messages = document.getElementById("messages");
 const toBottom = document.getElementById("to-bottom");
+// Mã CSRF của phiên — mọi POST gửi kèm trong header (docs/architecture.md, Truy cập và phân quyền)
+const csrfToken = document.querySelector('meta[name="csrf"]').content;
 let busy = false;
 
 function el(tag, text, className) {
@@ -58,7 +60,7 @@ function plainText(result) {
   return lines.join("\n");
 }
 
-// navigator.clipboard chỉ có trên https / localhost; máy khác trong Wi-Fi nhà mở http://<IP> → dùng cách cũ.
+// navigator.clipboard chỉ có trong secure context (https / localhost) và có thể bị trình duyệt chặn → dùng cách cũ.
 async function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) {
     await navigator.clipboard.writeText(text);
@@ -93,7 +95,70 @@ function actions(result) {
     }
   });
   row.append(button);
+  if (result.answer_id) row.append(rating(result));
   return row;
+}
+
+// Người hỏi chấm câu trả lời — nhãn dùng cho fine-tune / đánh giá (docs/danh-gia.md, Dữ liệu từ lịch sử hỏi đáp).
+const VERDICTS = [["dung", "Đúng"], ["sai", "Sai"], ["chua_du", "Chưa đủ"]];
+
+function rating(result) {
+  const box = el("div", null, "rating");
+  box.setAttribute("role", "group");
+  box.setAttribute("aria-label", "Đánh giá câu trả lời");
+  const saved = result.danh_gia || {};
+  const status = el("span", "", "rating-status");
+  // Ghi chú đã lưu hiện ngay dưới các nút; ô nhập chỉ mở khi bấm Sai / Chưa đủ, lưu xong thì đóng.
+  const savedNote = el("p", saved.ghi_chu ? `Ghi chú: ${saved.ghi_chu}` : "", "rating-saved-note");
+  savedNote.hidden = !saved.ghi_chu;
+  const note = el("div", null, "rating-note");
+  const area = el("textarea");
+  area.maxLength = 2000;
+  area.placeholder = "Sai chỗ nào, đúng phải là gì (không bắt buộc)";
+  area.setAttribute("aria-label", "Ghi chú đánh giá");
+  area.value = saved.ghi_chu || "";
+  const saveNote = el("button", "Lưu ghi chú");
+  saveNote.type = "button";
+  note.append(area, saveNote);
+  note.hidden = true;
+  let current = saved.nhan || null;
+
+  const buttons = VERDICTS.map(([value, text]) => {
+    const button = el("button", text);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(value === current));
+    button.addEventListener("click", () => {
+      note.hidden = value === "dung";
+      send(value, false);
+      if (!note.hidden) area.focus();
+    });
+    return button;
+  });
+  saveNote.addEventListener("click", () => current && send(current, true));
+
+  async function send(value, closeNote) {
+    const sentNote = note.hidden ? "" : area.value.trim();
+    status.textContent = "Đang lưu…";
+    try {
+      const response = await fetch("/api/danh-gia", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ answer_id: result.answer_id, nhan: value, ghi_chu: sentNote }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      current = value;
+      buttons.forEach((button, index) => button.setAttribute("aria-pressed", String(VERDICTS[index][0] === value)));
+      savedNote.textContent = sentNote ? `Ghi chú: ${sentNote}` : "";
+      savedNote.hidden = !sentNote;
+      if (closeNote) note.hidden = true;
+      status.textContent = "Đã lưu";
+    } catch (error) {
+      status.textContent = "Chưa lưu được — thử lại";
+    }
+  }
+
+  box.append(...buttons, status, savedNote, note);
+  return box;
 }
 
 function stepsBlock(steps, seconds, debugText, open) {
@@ -219,9 +284,14 @@ async function ask(question) {
   try {
     const response = await fetch("/api/hoi", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
       body: JSON.stringify({ cau_hoi: question }),
     });
+    if (!response.ok) {  // 401: phiên hết hạn; 403: mã CSRF không khớp (trang mở từ phiên cũ)
+      typing.remove();
+      body.append(el("p", "Phiên đăng nhập đã hết — tải lại trang để đăng nhập rồi hỏi lại.", "callout callout-no-basis"));
+      return;
+    }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -275,7 +345,7 @@ async function ask(question) {
     }
   } catch (error) {
     typing.remove();
-    body.append(el("p", "Mất kết nối tới laptop. Kiểm Wi-Fi rồi hỏi lại.", "callout callout-no-basis"));
+    body.append(el("p", "Mất kết nối tới laptop. Kiểm mạng (Tailscale đang bật?) rồi hỏi lại.", "callout callout-no-basis"));
   } finally {
     setBusy(false);
     input.focus();

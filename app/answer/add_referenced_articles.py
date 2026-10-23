@@ -16,10 +16,20 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app import config
-from app.answer.search_articles import load_chunk_texts
+from app.answer.search_articles import FROM_SQL, SELECT_COLUMNS, load_chunk_texts
 from app.answer.write_answer import MAX_CHARS_PER_ARTICLE
 
 MAX_REFERENCED = 2  # vừa ngữ cảnh 16K token cùng các Điều tìm được (write_answer.CONTEXT_CHAR_BUDGET)
+MAX_CEASING = 1  # khoản tuyên bố chấm dứt khoản thu — một khoản ngắn, đủ trả lời "còn phải nộp không"
+SOURCE_LABEL = re.compile(r"(?:khoản (?P<khoan>\S+) )?Điều (?P<dieu>\S+)")  # chỗ tuyên bố: 'khoản 7 Điều 10'
+# Khoản tuyên bố chấm dứt khoản thu (docs/architecture.md, Khoản thu bị chấm dứt): đủ cột như kết quả tìm kiếm.
+CEASING_SQL = f"""
+    select {SELECT_COLUMNS}, kp.char_start, kp.char_end
+    {FROM_SQL}
+    left join chunk_positions kp on kp.chunk_id = ch.id and kp.level = 'khoan' and kp.so = %(khoan)s
+    where d.id = %(document_id)s::uuid and p.level = 'dieu' and p.so = %(dieu)s
+    order by kp.char_start nulls last
+    limit 1"""
 REFERENCE = re.compile(r"(?:\bkhoản\s+(\d+)\s+(?:của\s+)?)?\bĐiều\s+(\d+[a-zđ]?)\b(?![./]\d)")
 DOCUMENT_TYPE = re.compile(r"\b(?:Bộ luật|Luật|Pháp lệnh|Nghị quyết|Nghị định|Quyết định|Thông tư|Hiến pháp|Văn bản"
                            r"|Hiệp định|Công ước|Điều ước|Quy chế|Quy định)\b(\s+liên tịch)?(\s+này\b)?")
@@ -70,16 +80,37 @@ def attached_part(number: str | None) -> tuple[str, str | None]:
     return "", number
 
 
+async def ceasing_articles(conn, sources: list[dict], as_of, have: set[int]) -> list[dict]:
+    """Khoản tuyên bố chấm dứt khoản thu (search_articles.ceased_sources), mỗi chỗ tuyên bố một lần."""
+    added = []
+    for source in sources[:MAX_CEASING]:
+        match = SOURCE_LABEL.fullmatch(source["vi_tri"])
+        if match is None:
+            continue
+        cursor = await conn.execute(CEASING_SQL, {"document_id": source["document_id"], "dieu": match["dieu"],
+                                                  "khoan": match["khoan"] or "", "as_of": as_of})
+        row = await cursor.fetchone()
+        if row is None or row["chunk_id"] in have:
+            continue
+        have.add(row["chunk_id"])
+        start, end = row.pop("char_start"), row.pop("char_end")
+        row.pop("uu_tien")
+        span = (start, end) if start is not None else None
+        added.append({**row, "score": 0.0, "nguon": ["cham_dut"],
+                      "dan_chieu": {"tu_doan": None, "khoan": match["khoan"] if span else None, "vi_tri": span}})
+    return added
+
+
 async def add_referenced_articles(state: dict) -> dict:
-    """Node LangGraph: thêm tối đa MAX_REFERENCED Điều được dẫn chiếu vào cuối `articles`."""
+    """Node LangGraph: thêm vào cuối `articles` tối đa MAX_REFERENCED Điều được dẫn chiếu, và khoản tuyên bố chấm dứt
+    khoản thu của các văn bản tìm được."""
     articles = state.get("articles") or []
     native = [a for a in articles if a["text_origin"] == "native"]  # chữ OCR không trích được — dẫn chiếu cũng bỏ
-    if not native:
-        return {}
     texts = await load_chunk_texts([a["chunk_id"] for a in native])
     have = {a["chunk_id"] for a in articles}
     added: list[dict] = []
     async with await psycopg.AsyncConnection.connect(config.DATABASE_CONNECTION, row_factory=dict_row) as conn:
+        added += await ceasing_articles(conn, state.get("ceased_sources") or [], state["as_of_date"], have)
         cursor = await conn.execute(AMENDING_DOCUMENTS_SQL, {"ids": [a["document_id"] for a in native]})
         amending = {row["id"] for row in await cursor.fetchall()}
         for article in native:
@@ -88,7 +119,7 @@ async def add_referenced_articles(state: dict) -> dict:
             number = articles.index(article) + 1
             prefix, own = attached_part(article["dieu_so"] if article["dieu_level"] == "dieu" else None)
             for clause, target in find_internal_references(texts[article["chunk_id"]][:MAX_CHARS_PER_ARTICLE], own):
-                if len(added) >= MAX_REFERENCED:
+                if sum("dan_chieu tu" in " ".join(a["nguon"]) for a in added) >= MAX_REFERENCED:
                     break
                 cursor = await conn.execute(TARGET_SQL, {"document_id": article["document_id"], "dieu": prefix + target,
                                                          "khoan": clause or ""})

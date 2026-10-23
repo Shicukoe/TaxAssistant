@@ -1,12 +1,14 @@
-"""Web app cho mạng nhà: Hỏi (luồng trả lời LangGraph) + Tra cứu (đọc thẳng văn bản). docs/ui-context.md
+"""Web app: Hỏi (luồng trả lời LangGraph) + Tra cứu (đọc thẳng văn bản), có đăng nhập. docs/ui-context.md
 
 Chạy:  bash scripts/run_web_demo.sh      (cần bash scripts/run_model_server.sh đang chạy)
-Máy khác trong Wi-Fi nhà mở http://<IP của laptop>:8000 — tường lửa Windows phải mở cổng 8000 cho mạng Private.
+Nghe 127.0.0.1; máy khác vào qua `tailscale serve` (HTTPS) — docs/architecture.md, Truy cập và phân quyền.
 
-Route chỉ kiểm đầu vào và gọi xuống app/answer, app/web/read_library — không gọi model, không viết SQL ở đây.
+Middleware chặn mặc định: mọi đường dẫn cần phiên đăng nhập trừ PUBLIC_PATHS và /static/; mọi POST qua kiểm CSRF.
+Route chỉ kiểm đầu vào và gọi xuống app/answer, app/web — không gọi model, không viết SQL ở đây.
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import sys
@@ -14,26 +16,40 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app import config
 from app.answer.answer_graph import build_answer_graph
+from app.answer.check_citations import saved_unverified_numbers
 from app.answer.check_claim_support import load_nli_model
 from app.answer.search_articles import provision_label
-from app.web import read_library, read_performance
+from app.web import authenticate_users, manage_conversations, read_library, read_performance, send_email_codes
 
 log = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).parent
 THREAD_COOKIE = "hoi_thoai"
 MAX_QUESTION_CHARS = 2000
+MAX_FORM_BYTES = 10_000
+# Trang không cần đăng nhập. Thêm đường dẫn vào đây phải có lý do (docs/code-standards.md, Web và API).
+PUBLIC_PATHS = {"/dang-nhap", "/dang-ky", "/dang-ky/xac-nhan", "/quen-mat-khau", "/quen-mat-khau/xac-nhan"}
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+SECURITY_HEADERS = {
+    # Chỉ script / style / ảnh từ chính app; ảnh data: cho favicon. Không script nội tuyến.
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; "
+                               "form-action 'self'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+}
+CODE_SENT = "Nếu email hợp lệ, mã xác nhận đã được gửi — xem hộp thư (cả mục Spam). Mã hết hạn sau 10 phút."
 STEP_NAMES = {  # tên bước hiện cho người dùng trong lúc chờ
     "understand_question": "Đọc câu hỏi, lấy mốc thời gian",
     "reply_small_talk": "Trả lời lời chào",
@@ -41,6 +57,7 @@ STEP_NAMES = {  # tên bước hiện cho người dùng trong lúc chờ
     "split_question": "Tách câu hỏi thành từng ý",
     "search_articles": "Tìm Điều luật liên quan",
     "add_referenced_articles": "Kéo thêm Điều được dẫn chiếu",
+    "add_deadline_rule": "Kiểm thời hạn rơi vào ngày nghỉ",
     "write_answer": "Viết câu trả lời",
     "check_citations": "Kiểm từng trích dẫn với văn bản gốc",
     "check_claim_support": "Kiểm câu kết luận có được căn cứ ủng hộ",
@@ -51,9 +68,9 @@ SAMPLE_QUESTIONS = [
     "Nộp hồ sơ khai thuế quá thời hạn từ 61 đến 90 ngày thì bị phạt bao nhiêu?",
     "Thuế suất thuế thu nhập doanh nghiệp năm 2026 là bao nhiêu?",
     "Hộ kinh doanh có doanh thu bao nhiêu thì không phải nộp thuế?",
-    "Mức thuế môn bài là bao nhiêu?",
+    "Năm 2026 còn phải nộp lệ phí môn bài không?",
 ]
-# Khung debug (chỉ hiện trên chính laptop): ô nào của state sau mỗi bước — giống bản terminal.
+# Khung debug (chỉ tài khoản quản trị): ô nào của state sau mỗi bước — giống bản terminal.
 DEBUG_FIELDS = {
     "understand_question": ["as_of_date", "as_of_source", "tax_types", "question_kind", "concept_term", "label_source",
                             "search_text"],
@@ -61,6 +78,7 @@ DEBUG_FIELDS = {
     "split_question": ["search_parts"],
     "search_articles": ["articles", "search_warning"],
     "add_referenced_articles": ["articles"],
+    "add_deadline_rule": ["calendar_notes", "articles"],
     "write_answer": ["draft", "write_usage"],
     "check_citations": ["citations", "unverified_numbers", "has_cause"],
     "check_claim_support": ["claim_support", "support_score", "claim_unscored"],
@@ -70,6 +88,9 @@ DEBUG_FIELDS = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Đăng ký / quên mật khẩu cần gửi mã — thiếu cấu hình thì dừng ngay, kèm cách sửa, thay vì lỗi 500 lúc đăng ký
+    for name in ("AUTH_SECRET", "SMTP_USER", "SMTP_PASSWORD"):
+        config.require_env(name)
     async with AsyncPostgresSaver.from_conn_string(config.DATABASE_CONNECTION) as checkpointer:
         await checkpointer.setup()
         app.state.graph = build_answer_graph(checkpointer)
@@ -86,19 +107,138 @@ app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
 
 
-def is_laptop(request: Request) -> bool:
-    return request.client is not None and request.client.host in ("127.0.0.1", "::1")
+# ---------------------------------------------------------------- Đăng nhập, CSRF (OWASP)
 
 
-def thread_id_of(request: Request) -> str | None:
-    value = request.cookies.get(THREAD_COOKIE, "")
-    try:
-        return str(uuid.UUID(value))
-    except ValueError:
-        return None
+def is_same_origin_request(request: Request) -> bool:
+    """Sec-Fetch-Site là tín hiệu chính; trình duyệt không gửi thì Origin phải là địa chỉ của app. Thiếu cả hai → không
+    tin (OWASP CSRF Prevention cheat sheet)."""
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        return site in ("same-origin", "none")
+    allowed = {config.WEB_PUBLIC_ORIGIN, f"http://127.0.0.1:{config.WEB_PORT}", f"http://localhost:{config.WEB_PORT}"}
+    return request.headers.get("origin") in allowed - {""}
+
+
+async def form_fields(request: Request) -> dict[str, str]:
+    """Form urlencoded → dict (thư viện chuẩn, không cần python-multipart). Body quá lớn → rỗng."""
+    body = await request.body()
+    if len(body) > MAX_FORM_BYTES:
+        return {}
+    return {key: values[0] for key, values in parse_qs(body.decode("utf-8", "replace"), keep_blank_values=True).items()}
+
+
+async def submitted_csrf_token(request: Request) -> str:
+    """Mã CSRF gửi kèm: header X-CSRF-Token (fetch) hoặc ô ẩn csrf (form). Body đọc ở đây vẫn tới được route —
+    BaseHTTPMiddleware của Starlette giữ lại body đã đọc (_CachedRequest)."""
+    if token := request.headers.get("x-csrf-token"):
+        return token
+    if request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
+        return (await form_fields(request)).get("csrf", "")
+    return ""
+
+
+def with_security_headers(response):
+    response.headers.update(SECURITY_HEADERS)
+    return response
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    unsafe = request.method not in SAFE_METHODS
+    if unsafe and not is_same_origin_request(request):
+        return with_security_headers(PlainTextResponse("Yêu cầu bị chặn: không đến từ trang của app.", 403))
+    request.state.session = None
+    if path not in PUBLIC_PATHS and not path.startswith("/static/"):
+        session = await authenticate_users.find_session(request.cookies.get(authenticate_users.SESSION_COOKIE, ""))
+        if session is None:
+            if path.startswith("/api/"):
+                return with_security_headers(JSONResponse({"loi": "Phiên đăng nhập đã hết. Tải lại trang."}, 401))
+            return with_security_headers(RedirectResponse("/dang-nhap", 303))
+        if unsafe and not hmac.compare_digest(await submitted_csrf_token(request), session.csrf_token):
+            return with_security_headers(PlainTextResponse("Yêu cầu bị chặn: thiếu mã CSRF. Tải lại trang.", 403))
+        request.state.session = session
+    return with_security_headers(await call_next(request))
+
+
+def account_page(request: Request, mode: str, **context):
+    return templates.TemplateResponse(request, "tai_khoan.html", {"mode": mode, **context})
+
+
+@app.get("/dang-nhap")
+async def login_page(request: Request, xong: str = ""):
+    done = {"dang_ky": "Đã tạo tài khoản — đăng nhập để dùng.", "mat_khau": "Đã đổi mật khẩu — đăng nhập lại."}
+    return account_page(request, "dang_nhap", thong_bao=done.get(xong))
+
+
+@app.post("/dang-nhap")
+async def login(request: Request):
+    fields = await form_fields(request)
+    user, error = await authenticate_users.check_login(fields.get("email", ""), fields.get("mat_khau", ""))
+    if user is None:
+        return account_page(request, "dang_nhap", loi=error, email=fields.get("email", "")[:254])
+    token = await authenticate_users.create_session(user.id)
+    response = RedirectResponse("/hoi", status_code=303)
+    response.set_cookie(authenticate_users.SESSION_COOKIE, token, httponly=True, secure=True, samesite="lax", path="/",
+                        max_age=int(authenticate_users.SESSION_LIFETIME.total_seconds()))
+    return response
+
+
+@app.post("/dang-xuat")
+async def logout(request: Request):
+    await authenticate_users.end_session(request.cookies.get(authenticate_users.SESSION_COOKIE, ""))
+    response = RedirectResponse("/dang-nhap", status_code=303)
+    response.delete_cookie(authenticate_users.SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+    return response
+
+
+# Đăng ký và quên mật khẩu cùng một luồng: bước 1 nhập email → gửi mã; bước 2 nhập mã + mật khẩu mới.
+CODE_FLOWS = {"/dang-ky": ("dang_ky", send_email_codes.REGISTER), "/quen-mat-khau": ("quen", send_email_codes.RESET_PASSWORD)}
+
+
+@app.get("/dang-ky")
+@app.get("/quen-mat-khau")
+async def code_request_page(request: Request):
+    mode, _ = CODE_FLOWS[request.url.path]
+    return account_page(request, mode, buoc=1)
+
+
+@app.post("/dang-ky")
+@app.post("/quen-mat-khau")
+async def code_request(request: Request):
+    mode, purpose = CODE_FLOWS[request.url.path]
+    email = (await form_fields(request)).get("email", "")[:254]
+    await send_email_codes.request_code(email, purpose)
+    return account_page(request, mode, buoc=2, email=email, thong_bao=CODE_SENT)
+
+
+@app.post("/dang-ky/xac-nhan")
+async def confirm_registration(request: Request):
+    fields = await form_fields(request)
+    error = await send_email_codes.complete_registration(
+        fields.get("email", ""), fields.get("ma", ""), fields.get("ten", ""), fields.get("mat_khau", ""))
+    if error:
+        return account_page(request, "dang_ky", buoc=2, loi=error, email=fields.get("email", "")[:254],
+                            ten=fields.get("ten", "")[:80])
+    return RedirectResponse("/dang-nhap?xong=dang_ky", status_code=303)
+
+
+@app.post("/quen-mat-khau/xac-nhan")
+async def confirm_password_reset(request: Request):
+    fields = await form_fields(request)
+    error = await send_email_codes.complete_password_reset(
+        fields.get("email", ""), fields.get("ma", ""), fields.get("mat_khau", ""))
+    if error:
+        return account_page(request, "quen", buoc=2, loi=error, email=fields.get("email", "")[:254])
+    return RedirectResponse("/dang-nhap?xong=mat_khau", status_code=303)
 
 
 # ---------------------------------------------------------------- Hỏi
+
+
+def current_user(request: Request) -> authenticate_users.User:
+    return request.state.session.user
 
 
 @app.get("/")
@@ -112,13 +252,24 @@ def vn_date(value) -> str:
     return f"{text[8:10]}/{text[5:7]}/{text[:4]}" if len(text) == 10 else text
 
 
+def thread_id_of(request: Request) -> str | None:
+    value = request.cookies.get(THREAD_COOKIE, "")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        return None
+
+
 def set_thread_cookie(response, thread_id: str) -> None:
-    response.set_cookie(THREAD_COOKIE, thread_id, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 365)
+    # Mã cuộc hội thoại không phải bí mật: mọi lần đọc / ghi đều kiểm chủ sở hữu (manage_conversations, read_library)
+    response.set_cookie(THREAD_COOKIE, thread_id, httponly=True, secure=True, samesite="lax", max_age=60 * 60 * 24 * 365)
 
 
 async def shell_context(request: Request, page: str) -> dict:
-    """Thanh bên có mặt trên mọi trang: danh sách cuộc hội thoại, cuộc đang mở."""
-    return {"trang": page, "threads": await read_library.list_threads(), "current_thread": thread_id_of(request)}
+    """Phần có mặt trên mọi trang: người đăng nhập, mã CSRF, danh sách cuộc hội thoại của người này."""
+    user = current_user(request)
+    return {"trang": page, "user": user, "csrf": request.state.session.csrf_token,
+            "threads": await read_library.list_threads(user.id), "current_thread": thread_id_of(request)}
 
 
 def legacy_conclusion(text: str) -> str:
@@ -139,9 +290,11 @@ def turn_view(row: dict) -> dict:
     """Một lượt đã lưu → cùng dạng với kết quả trực tiếp, để trình duyệt dựng bằng một hàm."""
     citations = [citation_view(c) for c in row["citations"] or []]
     return {"cau_hoi": row["cau_hoi"], "giay": None, "ket_qua": {
-        "chao_hoi": row["kind"] == "chao_hoi",
+        "chao_hoi": row["kind"] == "chao_hoi", "answer_id": row["answer_id"],
+        "danh_gia": {"nhan": row["verdict"], "ghi_chu": row["note"]} if row["verdict"] else None,
         "moc": vn_date(row["as_of_date"]), "ngu_canh": None, "co_can_cu": row["has_cause"],
-        "ket_luan": row["ket_luan"] or legacy_conclusion(row["tra_loi"]), "con_so_chua_can_cu": [],
+        "ket_luan": row["ket_luan"] or legacy_conclusion(row["tra_loi"]),
+        "con_so_chua_can_cu": saved_unverified_numbers(row["tra_loi"] or ""),
         "can_cu": [c for c in citations if c["trang_thai"] in ("dat", "bo_chu_ocr", "bo_cach_ly")],
         "so_trich_dan_bi_bo": sum(c["trang_thai"].startswith("bo_khong") or c["trang_thai"] == "bo_doan_khong_ton_tai"
                                   for c in citations),
@@ -157,11 +310,13 @@ async def ask_page(request: Request, hoi_thoai: str = ""):
         except ValueError:
             pass
         return response
+    user = current_user(request)
     thread_id = thread_id_of(request)
-    turns = [turn_view(row) for row in await read_library.load_thread_turns(thread_id)] if thread_id else []
+    # Cuộc hội thoại của người khác → không có lượt nào (câu SQL lọc theo chủ); hỏi tiếp sẽ sang cuộc mới (ask)
+    turns = [turn_view(row) for row in await read_library.load_thread_turns(thread_id, user.id)] if thread_id else []
     context = await shell_context(request, "hoi")
     response = templates.TemplateResponse(request, "hoi.html", {
-        **context, "turns": turns, "samples": SAMPLE_QUESTIONS, "show_debug": is_laptop(request)})
+        **context, "turns": turns, "samples": SAMPLE_QUESTIONS})
     if thread_id is None:
         set_thread_cookie(response, str(uuid.uuid4()))
     return response
@@ -171,6 +326,20 @@ async def ask_page(request: Request, hoi_thoai: str = ""):
 async def new_conversation():
     response = RedirectResponse("/hoi", status_code=303)
     set_thread_cookie(response, str(uuid.uuid4()))
+    return response
+
+
+@app.post("/hoi/an")
+async def hide_conversation(request: Request):
+    """Nút xoá ở thanh bên: chỉ ẩn khỏi danh sách (docs/architecture.md, Lịch sử theo người)."""
+    try:
+        thread_id = str(uuid.UUID((await form_fields(request)).get("hoi_thoai", "")))
+    except ValueError:
+        return RedirectResponse("/hoi", status_code=303)
+    await manage_conversations.hide_conversation(thread_id, current_user(request).id)
+    response = RedirectResponse("/hoi", status_code=303)
+    if thread_id == thread_id_of(request):
+        set_thread_cookie(response, str(uuid.uuid4()))
     return response
 
 
@@ -192,6 +361,8 @@ def answer_view(state: dict) -> dict:
     carried = state.get("label_source") == "luot_truoc"
     return {
         "chao_hoi": state.get("question_kind") == "chao_hoi",
+        "answer_id": state.get("answer_id"),
+        "danh_gia": None,
         "moc": vn_date(state.get("as_of_date")),
         "ngu_canh": (" · ".join(state.get("tax_types") or []) + f" · mốc {vn_date(state.get('as_of_date'))}") if carried else None,
         "co_can_cu": state.get("has_cause", False),
@@ -210,6 +381,8 @@ def debug_view(node: str, update: dict) -> dict:
         if field == "articles":
             value = [f"{a['score']}  {a['loai']} {a['so_hieu']} — {provision_label(a['dieu_level'], a['dieu_so'])}. "
                      f"{(a['dieu_ten'] or '')[:60]}  [{', '.join(a.get('nguon', []))}]" for a in value or []]
+        elif field == "write_usage":  # request (cả ngữ cảnh gửi model) và output quá dài cho khung debug
+            value = [{k: v for k, v in usage.items() if k not in ("request", "output")} for usage in value or []]
         view[field] = value
     return view
 
@@ -229,8 +402,13 @@ async def ask(request: Request):
         question = str(body.get("cau_hoi", "")).strip()[:MAX_QUESTION_CHARS]
     except (ValueError, AttributeError):  # không phải JSON UTF-8 hợp lệ — trình duyệt luôn gửi đúng
         question = ""
+    user = current_user(request)
     thread_id = thread_id_of(request) or str(uuid.uuid4())
-    show_debug = is_laptop(request)
+    new_thread = not await manage_conversations.claim_conversation(thread_id, user.id)
+    if new_thread:  # cuộc hội thoại của người khác, không chủ, hoặc đã ẩn → hỏi trong cuộc mới
+        thread_id = str(uuid.uuid4())
+        await manage_conversations.claim_conversation(thread_id, user.id)
+    show_debug = user.is_admin
 
     async def events():
         def line(payload: dict) -> str:
@@ -273,7 +451,22 @@ async def ask(request: Request):
                 return
             yield line({"ket_qua": answer_view(state), "giay": round(time.perf_counter() - started, 1)})
 
-    return StreamingResponse(events(), media_type="application/x-ndjson")
+    response = StreamingResponse(events(), media_type="application/x-ndjson")
+    if new_thread:
+        set_thread_cookie(response, thread_id)
+    return response
+
+
+@app.post("/api/danh-gia")
+async def rate_answer(request: Request):
+    """Người hỏi chấm câu trả lời: dung / sai / chua_du + ghi chú (docs/danh-gia.md, Dữ liệu từ lịch sử hỏi đáp)."""
+    try:
+        body = await request.json()
+        answer_id, verdict, note = int(body["answer_id"]), str(body["nhan"]), str(body.get("ghi_chu") or "")
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return JSONResponse({"ok": False}, 400)
+    saved = await manage_conversations.save_feedback(answer_id, current_user(request).id, verdict, note)
+    return JSONResponse({"ok": saved}, 200 if saved else 404)
 
 
 # ---------------------------------------------------------------- Tra cứu
@@ -293,7 +486,7 @@ async def library_page(request: Request, q: str = "", con_hieu_luc: int = 0, cap
 @app.get("/hieu-nang")
 async def performance_page(request: Request):
     return templates.TemplateResponse(request, "hieu_nang.html", {
-        **await shell_context(request, "hieu_nang"), "p": await read_performance.load_performance()})
+        **await shell_context(request, "hieu_nang"), "p": await read_performance.load_performance(current_user(request).id)})
 
 
 @app.get("/van-ban/{document_id}")
@@ -327,6 +520,9 @@ async def original_file(document_id: str):
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if config.WEB_HOST not in ("127.0.0.1", "localhost", "::1"):
+        log.warning("WEB_HOST=%s: cookie đăng nhập có cờ Secure nên chỉ đăng nhập được qua HTTPS (tailscale serve) "
+                    "hoặc http://127.0.0.1 — đặt WEB_HOST=127.0.0.1 trong .env", config.WEB_HOST)
     server = uvicorn.Server(uvicorn.Config(app, host=config.WEB_HOST, port=config.WEB_PORT, log_level="info"))
     # uvicorn tự chọn ProactorEventLoop trên Windows — psycopg async cần SelectorEventLoop (docs/code-standards.md).
     asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop if sys.platform == "win32" else None)

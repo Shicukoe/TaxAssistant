@@ -11,7 +11,9 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app import config
-from app.answer.search_articles import NEEDS_VALIDITY_CHECK_SQL, REPLACED_BY_SQL, expiry_note, provision_label
+from app.answer.search_articles import (
+    NEEDS_VALIDITY_CHECK_SQL, REPLACED_BY_SQL, YEAR_ONLY_END_SQL, expiry_note, provision_label,
+)
 from app.ingest import read_attachments
 
 PAGE_SIZE = 50
@@ -32,6 +34,7 @@ DOCUMENT_COLUMNS = f"""
     d.eff_status_code, d.text_origin, d.source_url, d.raw_path, {RANK_SQL} as cap,
     {NEEDS_VALIDITY_CHECK_SQL} as can_kiem_hieu_luc,
     {REPLACED_BY_SQL} as het_hieu_luc,
+    {YEAR_ONLY_END_SQL} as het_theo_nam,
     qd.reasons as ly_do_cach_ly"""
 
 LIST_SQL = f"""
@@ -40,6 +43,7 @@ LIST_SQL = f"""
     left join quarantined_documents qd on qd.document_id = d.id
     where (%(q)s = '' or d.so_hieu ilike '%%' || %(q)s || '%%' or d.tieu_de ilike '%%' || %(q)s || '%%'
            or f_unaccent(coalesce(d.tieu_de, '')) ilike '%%' || f_unaccent(%(q)s) || '%%')
+      and (not %(in_force)s or ({YEAR_ONLY_END_SQL} is null or {YEAR_ONLY_END_SQL} > %(as_of)s))
       and (not %(in_force)s or (coalesce(d.eff_status_code, '') <> 'HHL'
                                 and (d.eff_to is null or d.eff_to > %(as_of)s)
                                 and (d.eff_from is null or d.eff_from <= %(as_of)s)))
@@ -56,6 +60,9 @@ def labels(row: dict) -> list[tuple[str, str]]:
         found.append(("Hết hiệu lực" + (f" từ {row['eff_to']:%d/%m/%Y}" if row["eff_to"] else ""), "expired"))
     elif row["eff_status_code"] == "HHL1P":
         found.append(("Hết hiệu lực một phần", "expired"))
+    if row["het_theo_nam"] and row["het_theo_nam"] <= today:
+        found.append((f"Hết hiệu lực — chỉ áp dụng trong năm {row['het_theo_nam'].year - 1} "
+                      "(cổng chưa ghi ngày hết hiệu lực)", "expired"))
     if row["het_hieu_luc"]:
         found.append((expiry_note(row["het_hieu_luc"]), "expired"))
     elif row["can_kiem_hieu_luc"]:
@@ -133,22 +140,28 @@ def original_file(document: dict) -> Path | None:
     return attachment.source if attachment else None
 
 
-async def load_thread_turns(thread_id: str) -> list[dict]:
-    """Các lượt hỏi–đáp đã lưu của một cuộc hội thoại (bản ghi chính thức: questions/answers, không phải checkpoint)."""
+async def load_thread_turns(thread_id: str, user_id: int) -> list[dict]:
+    """Các lượt hỏi–đáp đã lưu của một cuộc hội thoại của người này (bản ghi chính thức: questions/answers, không
+    phải checkpoint), kèm đánh giá đã chấm."""
     async with await psycopg.AsyncConnection.connect(config.DATABASE_CONNECTION, row_factory=dict_row) as conn:
         return await (await conn.execute("""
-            select q.text as cau_hoi, q.kind, q.as_of_date, a.text as tra_loi, a.ket_luan, a.has_cause, a.citations
-            from questions q join answers a on a.question_id = q.id
-            where q.thread_id = %s order by q.asked_at""", (thread_id,))).fetchall()
+            select q.text as cau_hoi, q.kind, q.as_of_date, a.id as answer_id, a.text as tra_loi, a.ket_luan,
+                   a.has_cause, a.citations, f.verdict, f.note
+            from conversations c join questions q on q.thread_id = c.thread_id
+                                 join answers a on a.question_id = q.id
+                                 left join answer_feedback f on f.answer_id = a.id
+            where c.thread_id = %s and c.user_id = %s and c.hidden_at is null
+            order by q.asked_at""", (thread_id, user_id))).fetchall()
 
 
 THREAD_LIST_LIMIT = 30
 
 
-async def list_threads() -> list[dict]:
-    """Các cuộc hội thoại gần nhất cho thanh bên: câu hỏi đầu tiên làm tên."""
+async def list_threads(user_id: int) -> list[dict]:
+    """Các cuộc hội thoại gần nhất của người này cho thanh bên: câu hỏi đầu tiên làm tên."""
     async with await psycopg.AsyncConnection.connect(config.DATABASE_CONNECTION, row_factory=dict_row) as conn:
         return await (await conn.execute(f"""
-            select thread_id, (array_agg(text order by asked_at))[1] as ten, max(asked_at) as luc
-            from questions where thread_id is not null
-            group by thread_id order by max(asked_at) desc limit {THREAD_LIST_LIMIT}""")).fetchall()
+            select c.thread_id, (array_agg(q.text order by q.asked_at))[1] as ten, max(q.asked_at) as luc
+            from conversations c join questions q on q.thread_id = c.thread_id
+            where c.user_id = %s and c.hidden_at is null
+            group by c.thread_id order by max(q.asked_at) desc limit {THREAD_LIST_LIMIT}""", (user_id,))).fetchall()
