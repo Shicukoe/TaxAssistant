@@ -26,6 +26,7 @@ import psycopg
 
 from app import config
 from app.ingest import download_moj_documents as moj
+from app.ingest import read_attachments
 from app.ingest.split_articles import html_to_text_lines
 from app.ingest.stage_report import StageReport
 
@@ -59,6 +60,14 @@ def plain_text(doc: dict, limit: int) -> str:
         return ""
     text = " ".join(line.text for line in html_to_text_lines(doc["documentContent"]["content"]))
     return text[:limit]
+
+
+def attachment_text(doc: dict, limit: int) -> str:
+    """Chữ đầu file đính kèm — cho văn bản hợp nhất có JSON rỗng. Chỉ để đọc số hiệu, không trích."""
+    attachment = read_attachments.find_attachment(doc)
+    if attachment is None:
+        return ""
+    return " ".join(line.text for line in read_attachments.read_attachment_lines(attachment))[:limit]
 
 
 def find_references(text: str) -> list[tuple[str, date | None]]:
@@ -147,17 +156,22 @@ def link_consolidated_documents() -> StageReport:
                 if doc_group != "VBHN":
                     continue
                 report.count("van_ban_hop_nhat")
+                if not text and (text := attachment_text(doc, PREAMBLE_CHARS)):
+                    report.count("doc_mo_dau_tu_file_dinh_kem")
                 base, amending, evidence = read_consolidation_sources(so_hieu, doc.get("title") or "", text)
                 base_id = resolve(*base[0], so_hieu) if base else None
                 if base_id is None:
                     report.count("hop_nhat_chua_noi_duoc")
                     continue
                 report.count(f"noi_tu_{evidence.removeprefix('vbhn_')}")
-                relations.append((document_id, base_id, "hop_nhat", evidence))
+                # Ghi cả số hiệu gốc (to_doc_ref): nạp lại văn bản gốc làm to_doc thành NULL (ON DELETE SET NULL);
+                # thiếu to_doc_ref thì vi phạm relation_has_target và văn bản gốc không nạp lại được.
+                base_number = base[0][0]
+                relations.append((document_id, base_id, base_number, "hop_nhat", evidence))
                 for number, issued in amending:
                     amending_id = resolve(number, issued, so_hieu)
                     if amending_id and amending_id != base_id:
-                        relations.append((amending_id, base_id, "sua_doi", evidence))
+                        relations.append((amending_id, base_id, base_number, "sua_doi", evidence))
                         report.count("quan_he_sua_doi")
             except Exception as e:  # một văn bản lỗi không chặn văn bản khác (quy tắc bất biến số 11)
                 report.fail(so_hieu, e, log)
@@ -165,8 +179,8 @@ def link_consolidated_documents() -> StageReport:
         with conn.transaction():
             conn.execute("delete from document_relations where evidence in ('vbhn_preamble', 'vbhn_title')")
             conn.cursor().executemany(
-                "insert into document_relations (from_doc, to_doc, relation_type, evidence, confidence) "
-                "values (%s, %s, %s, %s, 1.0)", relations
+                "insert into document_relations (from_doc, to_doc, to_doc_ref, relation_type, evidence, confidence) "
+                "values (%s, %s, %s, %s, %s, 1.0)", relations
             )
             conn.cursor().executemany(
                 "update documents set content_matches_number = %s where id = %s", content_checks

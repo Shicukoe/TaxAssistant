@@ -41,12 +41,12 @@ source_health  (kiểm sống từng trang — mỗi trang một bài kiểm ngu
    ├──► other_source_documents   (RSS congbao + docid mới của vanban.chinhphu.vn → văn bản thuế
    │                              → đối chiếu Bộ Tư pháp → tải bản gốc văn bản Bộ Tư pháp chưa có)
    ▼
-moj_document_list ──► moj_documents ──┬──► database_documents ──► consolidated_links
-(danh sách, sitemap)  (JSON Bộ Tư pháp) │                         (nối văn bản hợp nhất,
-                                        │                          kiểm JSON đúng văn bản)
-                                        ├──► congbao_documents
-moj_attachments ────────────────────────┘    (tìm bù trên congbao)
-(file đính kèm)
+moj_document_list ──► moj_documents ──┬──────────────────────────► database_documents ──► consolidated_links
+(danh sách, sitemap)  (JSON Bộ Tư pháp) │                              ▲   (JSON rỗng → chữ   (nối văn bản hợp nhất,
+                                        ├──► moj_attachments ──┐       │    từ file đính kèm)  kiểm JSON đúng văn bản)
+                                        │    (file đính kèm)   ├──► converted_attachments
+                                        └──► congbao_documents ┘    (Tika: .doc/RTF/PDF → XHTML)
+                                             (tìm bù trên congbao)
 ```
 
 | Asset | Hàm gọi | Bài kiểm | Loại |
@@ -58,8 +58,11 @@ moj_attachments ─────────────────────�
 | `moj_documents` | `download_documents` | `ty_le_loi` ≤ 5% | chặn |
 | `moj_attachments` | `download_attachments` | `ty_le_loi` ≤ 5% | cảnh báo |
 | `congbao_documents` | `download_missing_from_congbao` | `ty_le_loi` ≤ 5% | cảnh báo |
+| `converted_attachments` | `convert_attachments` | `ty_le_loi` ≤ 5% (file Tika không đọc được). Metadata: `dong_sua_ma_tcvn3` — số dòng còn mã TCVN3, đã sửa theo bảng mã. **Cần Java + Tika** (`JAVA_EXE`, `TIKA_APP_JAR` trong `.env`) | cảnh báo |
 | `database_documents` | `save_documents_to_database` | `ty_le_loi` ≤ 1% | chặn |
+| `chunk_embeddings` | `embed_pending_chunks` | `ty_le_loi` ≤ 1%. Tính vector BGE-M3 cho đoạn mới / vừa nạp lại. **Cần server embedding** (`bash scripts/run_embedding_server.sh`) | cảnh báo |
 | `consolidated_links` | `link_consolidated_documents` | `ty_le_loi` ≤ 5%; `json_dung_van_ban`: liệt kê văn bản có số hiệu ở đầu chữ khác số hiệu của chính nó | cảnh báo |
+| `replaced_links` | `link_replaced_documents` | `ty_le_loi` ≤ 1% | cảnh báo |
 
 Các ngưỡng trên là tạm, sẽ chỉnh sau vài lần chạy thật.
 
@@ -77,6 +80,11 @@ Các ngưỡng trên là tạm, sẽ chỉnh sau vài lần chạy thật.
 - **Giới hạn:** nhiều nguồn giúp pipeline không dừng khi một trang hỏng, nhưng trang **đổi định dạng / API** thì vẫn phải sửa code đọc trang đó. `source_health` kiểm cả nội dung nên phát hiện được sớm.
 
 **Khi `source_health` báo một nguồn chết:** công đoạn dùng nguồn đó dừng ngay với lỗi `[tên nguồn] source_health báo nguồn chết` và **không thử lại** (thử lại 10/20 phút vô ích vì `source_health` không chạy lại giữa chừng); lần chạy sau tự kiểm lại. Nhánh `other_source_documents` bỏ qua đúng nguồn chết, nguồn còn lại vẫn chạy (đã mô phỏng 22/10/2026).
+
+**Dữ liệu sạch — hàng đợi xem tay** (lớp 2, 3 của `architecture.md`):
+- `database_documents` kiểm từng văn bản khi nạp (bảng `document_checks`). Văn bản trượt phép kiểm nặng bị **cách ly**: tìm được, không trích. Bài kiểm `van_ban_cach_ly` liệt kê chúng (luôn vàng khi còn văn bản chờ).
+- Xem danh sách: `python -m app.ingest.check_document_quality`. Xem tay xong: `python -m app.ingest.check_document_quality --da-xem <mã> dung "ghi chú"` (`sai` = giữ cách ly). Kết quả gắn với bản gốc — bản gốc đổi thì phải xem lại.
+- Bài kiểm `bo_do_co_dinh` (đỏ = chặn) chạy bộ đo cố định: một ca cũ trượt nghĩa là lần sửa code vừa rồi làm hỏng thứ đã đúng.
 
 **Biết trang nào hỏng:**
 1. Giao diện Dagster → asset `source_health` → tab Checks: bài kiểm `nguon_<tên>` đỏ = trang đó hỏng; metadata có địa chỉ, mã HTTP, lý do, thời gian phản hồi.

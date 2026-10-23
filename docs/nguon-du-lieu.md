@@ -47,6 +47,7 @@ Vì vậy project chọn: **chỉ lấy dữ liệu công khai và không vi ph�
 **Số hiệu không phải khoá:** 112 nhóm số hiệu trùng nhau trong database — 24 văn bản "Không số", số hiệu văn bản hợp nhất lặp lại mỗi năm ("11/VBHN-BTC" ×5). Khớp văn bản phải dùng `source_uuid`, hoặc số hiệu + ngày ban hành.
 
 **Định dạng thật của file đính kèm** (đọc vài byte đầu, 22/10/2026): 210 RTF (đuôi .doc), 107 Word 97 (OLE), 140 PDF; congbao có 21 .doc + 28 PDF.
+**Mã chữ** (đo lại 22/10/2026 trên nội dung, không chỉ bảng phông — số đếm theo bảng phông trước đó là **sai**): ~185/210 **RTF** là chữ **TCVN3** (`v'a8n ph'dfng` = "văn phòng", phông `.VnTime`/`.VnTimeH`); 106/107 **Word 97** đã là Unicode dù bảng phông có `.VnTime`. Word tự chuyển TCVN3 sang Unicode khi mở RTF; còn sót 67 dòng ở 7 file (sửa lại theo bảng mã), 1 file Word chuyển sai một phần ("LuỊt thuÕ") → coi là chữ chỉ để tìm. PDF: **59/141 gần như không có lớp chữ** (ảnh scan) → chờ OCR; VBHN 162/2026 có lớp chữ tốt.
 
 **Trạng thái hiệu lực không lọc cứng được** (đo 22/10/2026 trên database): 90/107 văn bản hợp nhất có trạng thái **để trống** — gồm cả 113/VBHN-VPQH (hợp nhất Luật Thuế TNDN năm 2026). Luật gốc đang dùng thường mang `HHL1P` (hết hiệu lực một phần) chứ không phải `CHL` — ví dụ Luật Thuế TNDN 67/2025/QH15 sau khi bị Luật 09/2026/QH16 sửa. Lọc `eff_status_code = 'CHL'` loại mất đúng các văn bản cần nhất. Hiệu lực của văn bản hợp nhất phải suy từ văn bản được hợp nhất và từ chú thích; việc này thuộc bước Lịch sử sửa đổi.
 

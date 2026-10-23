@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Hỏi đáp — Tax Assistant{% endblock %}
+{% block content %}
+<div class="chat{% if not turns %} is-empty{% endif %}" id="chat">
+  <div class="messages" id="messages"></div>
+
+  <section class="empty-state">
+    <h1>Hôm nay cần tra cứu gì về thuế?</h1>
+    <p>Câu trả lời trích nguyên văn Điều luật, kèm mốc thời gian áp dụng và link tới văn bản gốc.</p>
+  </section>
+
+  <form class="composer" id="ask-form">
+    <button type="button" class="to-bottom" id="to-bottom" hidden>↓ Xuống cuối</button>
+    <div class="composer-box">
+      <textarea id="question" rows="1" maxlength="2000" placeholder="Hỏi về thuế…" aria-label="Câu hỏi"></textarea>
+      <button type="submit" id="ask-button" class="send" aria-label="Gửi câu hỏi" title="Gửi (Enter)">
+        <svg class="icon"><use href="#i-send"/></svg></button>
+    </div>
+    <p class="hint">Không nêu tên khách hàng · luôn đối chiếu căn cứ<span class="hint-keys"> · Enter để gửi, Shift+Enter xuống dòng</span></p>
+  </form>
+
+  <div class="samples">
+    {% for q in samples %}<button type="button" class="sample" data-question="{{ q }}">{{ q }}</button>{% endfor %}
+  </div>
+</div>
+<script id="turns-data" type="application/json">{{ turns|tojson }}</script>
+<script src="/static/hoi.js"></script>
+{% endblock %}

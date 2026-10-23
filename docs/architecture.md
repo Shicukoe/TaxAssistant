@@ -7,12 +7,13 @@ Cập nhật: 15/10/2026. Muốn đổi một lựa chọn ở đây thì sửa 
 | Lớp | Chọn | Vai trò / vì sao |
 |---|---|---|
 | Ngôn ngữ | **Python 3.12** | Phần nặng (đọc PDF, OCR, chạy model trên GPU) đều mạnh nhất ở Python. Một ngôn ngữ, một chương trình |
-| Web | **FastAPI**, HTML/CSS/JS thuần render từ server (Jinja2) | Không cần bước build, không framework frontend |
+| Web | **FastAPI**, HTML/CSS/JS thuần render từ server (Jinja2) | Không cần bước build, không framework frontend. Đã cân nhắc Next.js + Tailwind + Shadcn + Vercel AI SDK (23/10/2026) — **giữ FastAPI** (người dùng chốt): câu trả lời chỉ hiện sau khi kiểm trích dẫn nên không stream từng chữ; độ chặt của trích dẫn nằm ở backend; thêm Node/TypeScript/bước build cho một người làm, một người dùng. Xem lại khi có nhiều người dùng hoặc giao diện cần nhiều trạng thái phía trình duyệt — khi đó bước trung gian là React build tĩnh bằng Vite, FastAPI phục vụ, không chạy server Node |
 | Database | **PostgreSQL 18** ngay từ đầu | Không phải chuyển database khi lên server |
 | Truy cập database | **psycopg 3**, SQL viết tay | Không ORM — schema nhỏ, một người viết |
 | Tìm kiếm | **Kết hợp** tìm theo từ khóa (full-text, bỏ dấu bằng `unaccent`) + tìm theo nghĩa (vector), gộp bằng reciprocal rank fusion | Mỗi cách bắt được những câu cách kia bỏ sót |
 | Lưu vector | **pgvector** trong Postgres | Không cần Qdrant — chữ, vị trí trích dẫn và vector ở cùng một chỗ, một câu SQL làm được cả lọc hiệu lực lẫn tìm |
-| Embedding | Model chạy trên **GPU RTX 3060 Laptop (6 GB)** | Miễn phí. Model cụ thể chọn sau khi đo ở bước Tìm kiếm |
+| Embedding | **BGE-M3** (BAAI, MIT, 1.024 chiều, 8.192 token) — người dùng chốt 23/10/2026 — chạy bằng **`llama-server` thứ hai** (`--embedding --pooling cls`, cổng 9932) trên **GPU RTX 3060 Laptop (6 GB)**; GGUF tự chuyển từ trọng số gốc của BAAI bằng `convert_hf_to_gguf.py` của llama.cpp b11796 | Miễn phí, chạy trên máy, cùng công nghệ phục vụ với model viết. Mỗi đoạn được gắn ngữ cảnh văn bản trước khi tính vector (cách Contextual Retrieval: loại, số hiệu, tên văn bản, tên Điều) — lấy từ database, không cần model |
+| Đọc file đính kèm | **Apache Tika 4.1.0** chạy hàng loạt (Tika Pipes) trên **Java Temurin 21** (chốt 22/10/2026, thay Word + pypdf sau khi đo — `danh-gia.md` mục 2) | Một công cụ cho `.doc` Word 97 (Apache POI), RTF, PDF (PDFBox); chạy được trên Linux. Đầu ra XHTML → bỏ header/footer trang → bộ tách dòng HTML có sẵn → bộ sửa mã TCVN3 của dự án (Tika không chuyển TCVN3 ở header RTF). PDF đọc tốt hơn pypdf (chữ hợp lệ 95,0% so với 90,4%). Java và Tika để ở `D:/tools/`, đường dẫn trong `config.py` |
 | OCR | **Tesseract**, gói tiếng Việt `vie` (chốt 13/10/2026) | Nhẹ, chạy bằng CPU. Unlimited-OCR (~6,7 GB) không vừa GPU 6 GB. Độ chính xác đo theo `danh-gia.md` |
 | Model AI | **Tự host trên laptop** (chốt 21/10/2026): **Qwen3.5-4B** bản GGUF lượng tử 4-bit (`Q4_K_M`, file 2,74 GB) — ĐỀ XUẤT, chốt sau khi đo — viết câu trả lời và tạm thời phân loại câu hỏi. **Mốc thời gian lấy bằng quy tắc, không dùng model** (chốt 18/10/2026). Không dùng Claude API trong app | Học tự host, câu hỏi của mẹ không ra khỏi máy. Bản 9B không vừa 6 GB VRAM |
 | Chạy model | **llama.cpp `llama-server`** (chốt 21/10/2026), bản dựng sẵn Windows CUDA 12.4 (khớp driver 552.44) | API kiểu OpenAI, ép đầu ra theo JSON schema; mọi tham số (context, số lớp lên GPU, KV cache) là cờ lệnh rõ ràng. File model để ở ổ D |
@@ -30,34 +31,48 @@ Cập nhật: 15/10/2026. Muốn đổi một lựa chọn ở đây thì sửa 
 - `app/ingest/` — lấy văn bản về và đưa vào database. Chỉ ghi các bảng văn bản (`documents`, `provisions`, `chunks`, `chunk_positions`, sau này `amendments`, `embeddings`). Không gọi model AI.
   - `download_moj_documents.py` — sitemap vbpl.vn → JSON cổng Bộ Tư pháp + file đính kèm → `data/raw/moj/`
   - `download_from_congbao.py` — nguồn dự phòng cho văn bản cổng Bộ Tư pháp không có → `data/raw/congbao/`
-  - `split_articles.py` — HTML → Điều / khoản / điểm kèm vị trí ký tự. Không đọc mạng, không ghi DB
+  - `split_articles.py` — HTML → Điều / khoản / điểm kèm vị trí ký tự (văn bản không có Điều → mục / đoạn). Không đọc mạng, không ghi DB
+  - `check_document_quality.py` — phép kiểm bất biến cho từng văn bản (mã chữ, thứ tự đề mục, độ phủ, đoạn quá dài) → `document_checks`; hàng đợi xem tay và lệnh ghi kết quả xem tay → `document_reviews`
+  - `check_golden_cases.py` — bộ đo cố định: mỗi lỗi gặp thật là một ca trên văn bản thật
+  - `embed_chunks.py` — vector BGE-M3 cho đoạn chưa có vector, gắn ngữ cảnh văn bản (loại, số hiệu, tên văn bản, tên Điều) trước khi tính → bảng `embeddings`. Gọi model embedding qua `app/answer/call_local_model.py` — ngoại lệ duy nhất của "ingest không gọi model"
+  - `read_attachments.py` — chữ của file đính kèm: Tika đọc `.doc`/RTF/PDF → XHTML ở `data/converted/` → các dòng chữ (bỏ header/footer trang), sửa mã TCVN3 còn sót; chữ PDF coi là OCR
   - `save_to_database.py` — bản lưu trên đĩa → database
   - `stage_report.py` — báo cáo của một công đoạn: đếm kết quả, danh sách lỗi từng văn bản
   - `check_sources.py` — bảng nguồn (tên, vai trò, ghi nguồn) + kiểm sống từng trang **kèm kiểm nội dung** → `data/raw/source_health.json`; tên nguồn theo địa chỉ cho log lỗi
   - `discover_from_other_sources.py` — RSS congbao + docid mới của vanban.chinhphu.vn → văn bản thuế → đối chiếu Bộ Tư pháp → tải bản gốc văn bản Bộ Tư pháp chưa có
   - `link_consolidated_documents.py` — đọc đoạn mở đầu (hoặc tiêu đề) của văn bản hợp nhất → quan hệ `hop_nhat` (bản hợp nhất → văn bản gốc) và `sua_doi` (văn bản sửa → văn bản gốc); kiểm "JSON có đúng văn bản không" → `documents.content_matches_number`
+  - `link_replaced_documents.py` — đọc câu "… số 38/2019/QH14 … hết hiệu lực kể từ …" trong Điều hiệu lực của văn bản mới → quan hệ `thay_the` (văn bản mới → văn bản cũ) kèm ngày, khoản ghi câu đó, có "trừ …" không; view `document_replacements` (migration 009) suy ra cả bản hợp nhất của văn bản cũ
 - `app/pipeline/` — nối các công đoạn của `app/ingest/` thành pipeline Dagster (`definitions.py`). Chỉ gọi hàm có sẵn, không chứa logic tải hay tách văn bản.
 - `dagster_home/` — nơi Dagster lưu lịch sử chạy và log (không commit, trừ `dagster.yaml`).
 - `scripts/run_pipeline.sh` — chạy pipeline một lần, hoặc mở Dagster (`ui`): giao diện web + bộ hẹn giờ chạy hằng tuần. Bash: Git Bash trên Windows, Linux trên VPS. Giải thích Dagster và cách xem lỗi: `pipeline-du-lieu.md`.
-- `data/raw/` — bản gốc tải về (không commit). Mỗi nguồn một thư mục: `moj/`, `congbao/` (bù cho văn bản Bộ Tư pháp thiếu chữ, theo mã Bộ Tư pháp), `congbao/new/` (văn bản mới phát hiện qua RSS, theo mã congbao), `vanban_chinhphu/` (theo docid). `source_health.json` — kết quả kiểm sống gần nhất. Chỉ thêm, không sửa: bản bị cổng sửa thì bản cũ chuyển vào `data/raw/moj/history/{id}/{ngày}.json`.
+- `data/raw/` — bản gốc tải về (không commit). Mỗi nguồn một thư mục: `moj/`, `congbao/` (bù cho văn bản Bộ Tư pháp thiếu chữ, theo mã Bộ Tư pháp), `congbao/new/` (văn bản mới phát hiện qua RSS, theo mã congbao), `vanban_chinhphu/` (theo docid). `source_health.json` — kết quả kiểm sống gần nhất. `data/converted/` — XHTML Tika đọc từ file đính kèm, `<đường dẫn gốc>.xml` (không commit, tạo lại được từ bản gốc). Chỉ thêm, không sửa: bản bị cổng sửa thì bản cũ chuyển vào `data/raw/moj/history/{id}/{ngày}.json`.
 - `docs/` — tài liệu thiết kế.
 
-- `app/answer/` — luồng trả lời (LangGraph). **Bản demo tối thiểu** từ 22/10/2026: tìm kiếm mới là full-text thô, chưa có embedding, reranker, lịch sử sửa đổi.
-  - `call_local_model.py` — **chỗ duy nhất gọi model** (`llama-server`), trả token và thời gian chạy
+- `app/answer/` — luồng trả lời (LangGraph). **Bản demo** từ 22/10/2026; từ 23/10/2026 đã có tìm kết hợp và kéo Điều được dẫn chiếu, chưa có reranker, lịch sử sửa đổi theo từng Điều.
+  - `call_local_model.py` — **chỗ duy nhất gọi model**: model viết (`llama-server` cổng 9931, trả token và thời gian chạy) và model embedding BGE-M3 (cổng 9932)
+  - `split_question.py` — câu hỏi nhiều ý → 2–5 câu tìm kiếm ngắn (model, JSON schema); câu ngắn một ý thì không tách, không gọi model
   - `understand_question.py` — mốc thời gian (quy tắc), loại thuế và loại câu hỏi (quy tắc từ khoá + model, T=0), mang ô từ lượt trước sang
-  - `search_articles.py` — tìm Điều bằng full-text, lọc theo hiệu lực tại mốc (không lọc cứng "còn hiệu lực")
+  - `search_articles.py` — tìm kết hợp: từ khoá (full-text) + theo nghĩa (BGE-M3, pgvector), gộp bằng RRF (k = 60), cùng một bộ lọc hiệu lực tại mốc; server embedding tắt → chỉ từ khoá, báo ở debug
+  - `add_referenced_articles.py` — kéo thêm Điều mà các Điều tìm được dẫn chiếu tới **trong cùng văn bản** ("theo quy định tại khoản 2 Điều 9 Luật này"), bằng quy tắc, không gọi model
+  - `answer_simple_questions.py` — hai nhánh không gọi model: chào hỏi (câu mẫu), khái niệm (tra định nghĩa trong luật)
+  - `measure_search.py` + `search_eval_questions.json` — đo recall@5, MRR@10 cho từ khoá / theo nghĩa / kết hợp; bộ câu hỏi hiện là **bộ tạm**
   - `write_answer.py` — model viết câu trả lời theo JSON schema (kết luận + căn cứ trích nguyên văn)
   - `check_citations.py` — guardrail tất định: trích dẫn khớp từng chữ, chữ OCR không trích, con số có căn cứ
   - `check_claim_support.py` — guardrail g: mỗi câu kết luận có được khoản chứa trích dẫn ủng hộ không (cách AlignScore, model NLI đa ngôn ngữ chạy CPU)
   - `answer_graph.py` — nối các bước bằng LangGraph + checkpointer Postgres; bước cuối ghi `questions`, `answers`, `usage_log`
   - `chat_in_terminal.py` — demo: chat trong terminal, in state sau từng bước để debug
 - `scripts/chat_demo.sh` — chạy demo chat (cần `run_model_server.sh` đang chạy)
+- `scripts/run_embedding_server.sh` — llama-server thứ hai cho BGE-M3 (cổng 9932)
 
 Dự kiến, **chưa có** (đặt tên khi tới bước tương ứng):
 
 - thư mục tìm kiếm đầy đủ (bước Tìm kiếm) — thay `search_articles.py`: tìm kết hợp, embedding, reranker
 - web app (bước Giao diện)
-- thư mục web (bước Giao diện) — FastAPI + template; không chứa logic tìm kiếm hay gọi model trực tiếp
+- `app/web/` — web app FastAPI + template Jinja2 (bản demo cho mạng nhà từ 22/10/2026); không gọi model hay viết SQL trong route. Hai chế độ trên cùng dữ liệu (chốt 22/10/2026): **Hỏi** (chạy luồng LangGraph của `app/answer`, gửi tiến độ từng bước về trình duyệt) và **Tra cứu** (đọc thẳng văn bản dựng thành HTML từ database — không chuẩn hoá thành PDF; kèm link tải bản gốc). Trích dẫn trong câu trả lời là link tới đúng Điều ở trang tra cứu
+  - `server.py` — ứng dụng FastAPI, route, chạy uvicorn trên `0.0.0.0:8000`
+  - `read_performance.py` — số liệu trang Hiệu năng: số câu đã hỏi, thời gian trả lời (`answers.duration_ms`, migration 010), bộ nhớ GPU (`nvidia-smi`), tốc độ đọc/sinh của model (`/metrics` của `llama-server`)
+  - `read_library.py` — câu SQL cho trang tra cứu (danh sách, một văn bản, nhãn)
+  - `templates/`, `static/` — HTML, CSS, JS thuần
 
 ## Lưu trữ
 
@@ -98,16 +113,29 @@ Dự kiến, **chưa có** (đặt tên khi tới bước tương ứng):
 
 **Cắt văn bản theo Điều.** Mỗi đoạn tìm kiếm là một Điều trọn vẹn, kèm vị trí từng khoản/điểm để trích dẫn chi tiết. Lý do: cắt nhỏ tới điểm thì nhiều điểm đứng một mình vô nghĩa — điểm a khoản 4 Điều 13 Nghị định 125/2020 chỉ nói "nộp hồ sơ trễ 61–90 ngày", mức phạt 8–15 triệu nằm ở câu dẫn của khoản.
 Văn bản không có Điều (thông tư cũ chia theo Phần / Mục / I. / 1.) thì **cắt theo đề mục lớn nhất**, trích dẫn kiểu "mục II.3 Thông tư …". Không có cả đề mục thì cắt theo độ dài. (chốt 02/10/2026)
+Cách làm (22/10/2026, đo trên 425 văn bản còn dùng không có Điều):
+- Có mục La Mã (I., II. — 204 văn bản) → mỗi **mục La Mã** là một đoạn tìm kiếm; "1." trong mục là khoản, "a)" là điểm. Phần chữ phía trên ("A. VỀ THUẾ MÔN BÀI", "Phần B", "PHẦN Đ" — thứ tự chữ cái tiếng Việt, có khi bỏ chữ; mỗi phần đánh mục lại từ I) **không** làm đoạn — đo được đoạn theo phần to gấp ~3 lần (p90 14.900 ký tự so với 5.800) — mà ghi vào số hiệu mục: `B.II` = "mục II phần B".
+- Không có mục La Mã nhưng có "1.", "2." (132 văn bản) → mỗi số là một mục; "a)" là điểm.
+- Không có đề mục (89 văn bản, phần lớn là Lệnh công bố, thông tư ngắn) → cắt theo độ dài tại ranh giới dòng, mỗi đoạn ≤ 6.000 ký tự, cấp `doan`.
+- Đề mục chỉ được nhận khi **đúng thứ tự** (II sau I, B sau A), như khoản/điểm — dòng "V. Đô thị loại V" trong bảng không mở mục giả. Cấp lưu ở `provisions.level` / `chunk_positions.level`: thêm `muc`, `doan` (migration 005).
 
 **Văn bản chỉ có file đính kèm** (22% văn bản trên cổng JSON) → tải file về lưu bản gốc. (chốt 02/10/2026)
 
 **Mọi chữ lấy từ PDF đều coi là OCR** — chỉ để tìm, không trích. Nhiều PDF là bản scan đã OCR sẵn, chữ sai kiểu "QUYÉT ĐỊNH", và không có cách chắc chắn biết PDF nào là chữ gốc. Chỉ chữ từ HTML của cổng và từ file DOC/RTF mới được trích nguyên văn. (chốt 02/10/2026)
 
+**Bốn lớp giữ dữ liệu sạch** (chốt 22/10/2026). Lý do: sửa từng ca bằng quy tắc riêng không mở rộng được — lỗi kiểu mới chỉ lộ ra khi tình cờ thấy.
+1. **Định dạng file do công cụ chuẩn đọc**, không tự viết bộ đọc: **Apache Tika** (chốt 22/10/2026). Apache Tika (Word 97 qua Apache POI, RTF, PDF qua PDFBox, nối được Tesseract) **đã đo trên chính 317 + 141 file** (22/10/2026, `danh-gia.md` mục 2): PDF tốt hơn pypdf rõ (chữ hợp lệ 95,0% so với 90,4%), Word/RTF ngang Word; chạy được trên Linux. Đã đổi sang Tika (chốt 22/10/2026). Java Temurin 21 và Tika 4.1.0 để ở `D:/tools/` (không thuộc repo).
+2. **Kiểm bất biến chung cho từng văn bản, không nhận dạng từng ca.** Mỗi văn bản có một bảng kết quả kiểm (đạt / trượt + lý do): số mục, khoản liên tục; không còn ký tự đặc trưng TCVN3; số hiệu ở đầu chữ khớp số hiệu; đoạn không quá dài; độ phủ chữ; hiệu lực đáng tin. Văn bản trượt phép kiểm nặng bị **cách ly**: vẫn tìm được, không được trích, nằm trong danh sách chờ xem tay (Dagster, sau này cả trang tra cứu). Lỗi kiểu mới vì vậy bị chặn dù chưa ai viết quy tắc cho nó. **Ngoại lệ (người dùng chốt 23/10/2026):** văn bản hợp nhất trượt phép kiểm thứ tự đề mục chỉ bị **cảnh báo**, không cách ly — văn bản hợp nhất rất quan trọng, và số Điều nhảy thường là bình thường (Điều bị bãi bỏ được bỏ khỏi bản hợp nhất, Điều chèn thêm "12a"); lỗi mã chữ vẫn cách ly.
+3. **Mỗi lỗi gặp thật thành một ca trong bộ đo cố định** (văn bản thật + kết quả đúng). Sửa bộ tách, bộ đọc nào cũng chạy lại cả bộ — sửa ca mới không được làm hỏng ca cũ.
+4. **Học cấu trúc từ nhãn có sẵn thay vì thêm regex:** markup `prov-*` của cổng Bộ Tư pháp làm nhãn cho một bộ phân loại từng dòng (đề mục / khoản / điểm / chữ thường), đo trên văn bản để riêng. Chỉ thay regex khi tốt hơn trên bộ đo; regex còn lại làm đường dự phòng. **Đã đo 22/10/2026: model từng dòng kém regex ở mọi nhãn (F1 trung bình 0,961 so với 0,982) → giữ regex**; thử lại với model có ngữ cảnh khi có lỗi cấu trúc regex không sửa được. Model nào dùng cho việc này phải qua quy tắc bất biến số 10.
+
+**Hiệu lực ghi trên cổng không đáng tin ở văn bản cũ** (đo 22/10/2026: NĐ 24/2007/NĐ-CP về TNDN đã bị thay vẫn ghi "còn hiệu lực"). Văn bản cổng ghi còn hiệu lực (`CHL`, `HHL1P`, trống) mà **không có ngày hết hiệu lực** và **ban hành trước mốc hỏi hơn 10 năm** → nhãn **"cần kiểm hiệu lực"**, khi tìm kiếm xếp sau mọi văn bản không mang nhãn (chốt 22/10/2026; ngưỡng 10 năm là tạm — đo bằng cách xem tay mẫu văn bản bị gắn nhãn). Văn bản hợp nhất không áp quy tắc này (mang ngày ban hành mới). Không tự suy "hết hiệu lực" — chỉ cảnh báo; suy từ quan hệ thay thế làm ở bước Lịch sử sửa đổi.
+
 **Cập nhật** hằng tuần, tự động bằng lịch của Dagster (`cap_nhat_hang_tuan` trong `app/pipeline/definitions.py`, thứ Hai 9:00 giờ Việt Nam). Lịch chỉ chạy khi Dagster đang mở (`run_pipeline.sh ui`). Máy tắt lúc tới giờ thì lần mở Dagster sau chạy bù **một** lần (Dagster chỉ xét lần hẹn gần nhất bị lỡ với lịch không chia partition — đọc trong mã nguồn Dagster 1.13, chưa thử tắt máy thật). Không dùng Task Scheduler của Windows.
 
 ## Truy cập và phân quyền
 
-- **Giai đoạn đầu:** app chạy trên laptop. Mẹ truy cập qua VPN mạng riêng — không mở cổng nào ra internet, chưa cần đăng nhập, chưa cần domain. Ai vào được mạng riêng là vào được app.
+- **Giai đoạn đầu:** app chạy trên laptop. Mẹ truy cập trong **mạng nhà** (chỉ cổng web nghe `0.0.0.0`, tường lửa Windows mở cho mạng Private; model server, Postgres, Dagster giữ ở `127.0.0.1` — chốt 22/10/2026) hoặc qua VPN mạng riêng — không mở cổng nào ra internet, chưa cần đăng nhập, chưa cần domain. Ai vào được mạng riêng là vào được app.
 - **Database:** app kết nối bằng user riêng `taxassistant`, chỉ có quyền trên database `taxassistant` (quyền kết nối của PUBLIC bị thu hồi). Tài khoản `postgres` chỉ dùng cho `create_app_user.sql`.
 - **Bí mật** (mật khẩu DB, API key của giám khảo) chỉ nằm trong `.env`, không bao giờ vào code hay git.
 - **Dữ liệu của khách:** câu hỏi của mẹ được trả lời bằng model chạy trên laptop, **không ra khỏi máy** (từ 21/10/2026). Ngoại lệ duy nhất: các câu trong **bộ câu hỏi kiểm tra** (lấy từ câu hỏi thật, đã bỏ tên khách) được gửi lên API của Anthropic khi chạy giám khảo. Mẹ vẫn hỏi không nêu tên khách; giao diện có dòng nhắc.
@@ -115,10 +143,14 @@ Văn bản không có Điều (thông tư cũ chia theo Phần / Mục / I. / 1.
 
 ## Model AI
 
+- **Rẽ nhánh theo loại câu hỏi bằng cạnh có điều kiện của LangGraph** (chốt 23/10/2026) — đồ thị vẫn cố định: **chào hỏi / không phải câu hỏi** → câu trả lời mẫu, không tìm, không gọi model; **khái niệm** ("X là gì", "khái niệm X", "X nghĩa là") → tra thẳng khoản "X là …" trong Điều "Giải thích từ ngữ" **hoặc Điều mang đúng tên khái niệm** (Luật Quản lý thuế 108/2025 đặt "Điều … Hóa đơn điện tử", khoản 1 "Hóa đơn điện tử là …") của văn bản dùng được tại mốc hỏi, trả lời bằng chính đoạn trích; không thấy thì đi luồng thường; **còn lại** → luồng thường. Nhận loại bằng quy tắc, không bằng model.
 - **Quy trình cố định trong code, không phải agent.** Model không tự quyết "tìm thêm". Lý do: thời gian mỗi câu hỏi dự đoán được, bước kiểm trích dẫn luôn chạy, lỗi truy được về đúng bước. Điều phối bằng **LangGraph** (chốt 21/10/2026) với các cạnh cố định; phần dữ liệu và kiểm trích dẫn là code của dự án.
 - **Hội thoại nhiều lượt** (chốt 21/10/2026): mỗi cuộc hội thoại là một `thread_id`. Lượt sau mang sang các **ô có cấu trúc** của lượt trước (loại thuế, đối tượng, văn bản đang bàn, mốc thời gian) và chỉ thay ô mà câu mới nêu — mốc thời gian vẫn đọc bằng quy tắc. Không đưa cả lịch sử hội thoại vào model (ngữ cảnh 4B có hạn).
 - **Quy tắc dùng LangGraph:** (1) `answers` là bản ghi chính thức, checkpoint chỉ là trạng thái lúc chạy; (2) `questions.thread_id` nối hai nơi; (3) `durability="async"` — ghi checkpoint song song với bước sau, không chặn luồng; (4) luôn đặt `LANGGRAPH_STRICT_MSGPACK=true` (README của checkpointer cảnh báo đọc lại checkpoint có thể bị lợi dụng chạy code); (5) ghim phiên bản LangGraph trong `pyproject.toml`; (6) xoá lịch sử của mẹ phải xoá cả hai nơi. Kết nối của checkpointer phải có `autocommit=True` và `row_factory=dict_row` (theo README).
-- **Các bước:** lấy mốc thời gian bằng quy tắc + model trên máy phân loại loại thuế, loại câu hỏi (ép JSON schema) → tìm kiếm kết hợp → lọc theo hiệu lực tại mốc, xếp văn bản luật trước công văn → xếp lại bằng model chạy trên máy (ĐỀ XUẤT: cross-encoder như bge-reranker-v2-m3 — chọn ở bước Tìm kiếm) → model trên máy viết câu trả lời → kiểm từng trích dẫn với `chunk_positions`.
+- **Các bước:** lấy mốc thời gian bằng quy tắc + model trên máy phân loại loại thuế, loại câu hỏi (ép JSON schema) → tìm kiếm kết hợp → lọc theo hiệu lực tại mốc, xếp văn bản luật trước công văn → xếp lại bằng model chạy trên máy (ĐỀ XUẤT: cross-encoder như bge-reranker-v2-m3 — **chỉ thêm khi số đo cho thấy cần**: Điều đúng có trong top 20 nhưng rơi khỏi top 5) → **kéo Điều được dẫn chiếu** → model trên máy viết câu trả lời → kiểm từng trích dẫn với `chunk_positions`.
+- **Tách câu hỏi nhiều ý** (chốt 23/10/2026 — người dùng: câu hỏi phân tích như "khoản chi nào được trừ, khoản nào bị loại, cần bổ sung hồ sơ gì, rủi ro truy thu, xử phạt" cần 5–6 mảng luật; tìm một lần chỉ ra 4 Điều của một hai mảng): bước cố định giữa hiểu câu hỏi và tìm, không phải agent. **Quy tắc trước:** câu dưới 30 từ và một dấu hỏi, hoặc câu hỏi nối tiếp → giữ nguyên, không gọi model. Câu dài → model tách thành 2–5 câu tìm kiếm ngắn dùng thuật ngữ văn bản luật (T=0, JSON schema). Mỗi câu tìm riêng, lấy 2 Điều đầu của mỗi câu theo lượt, bỏ trùng, tối đa 8 Điều. Câu tách ra **chỉ dùng để tìm** — không đưa vào câu trả lời như dữ kiện, hiện ở khung debug. Ngữ cảnh model vẫn ≤ 30.000 ký tự: nhiều Điều thì mỗi Điều được ít chữ hơn. Model được dặn trả lời lần lượt từng ý; dữ kiện câu hỏi chưa nêu thì chia nếu–thì và nói rõ cần thêm dữ kiện gì, không giả định. Giới hạn đã biết: model 4B, ngữ cảnh 16K — câu phân tích dài chạm trần chất lượng của model nhỏ.
+- **Kéo Điều được dẫn chiếu** (chốt 23/10/2026 — 4.610/16.878 đoạn, 27%, có câu kiểu "khoản 2 Điều 9"; chỉ đưa Điều đang có thì model trả lời thiếu nửa quy định): với các Điều tìm được, tìm dẫn chiếu bằng quy tắc; chỉ nhận dẫn chiếu **trong cùng văn bản** ("Điều 9", "Điều 9 Luật này", "khoản 2 Điều 9 của Nghị định này"), bỏ dẫn chiếu sang văn bản khác ("Điều 9 Luật Quản lý thuế") và mọi dẫn chiếu trong **văn bản sửa đổi** (số Điều ở đó là của văn bản bị sửa). Có số khoản thì chỉ đưa khoản đó (vị trí lấy từ `chunk_positions`). Tối đa 2 Điều thêm, mỗi Điều tối đa 3.000 ký tự; thêm vào cuối danh sách, trích dẫn vẫn qua đủ guardrail. Lưu ở dạng quan hệ trong database thì để sau, khi web cần hiện "Điều này được dẫn chiếu bởi…" — kiểu GraphRAG của Microsoft (model tự rút thực thể) **không dùng**: câu hỏi của mẹ cụ thể, không phải câu hỏi tổng quát cả kho; quan hệ luật đã ghi sẵn trong chữ.
+- **Văn bản bị văn bản mới tuyên bố hết hiệu lực** (chốt 23/10/2026 — người dùng: luôn ưu tiên văn bản có hiệu lực theo thời gian, dù luật cũ lọt vào là do cổng dữ liệu hay do dự án): Điều hiệu lực của văn bản mới thường ghi "Luật Quản lý thuế số 38/2019/QH14 … hết hiệu lực thi hành kể từ ngày Luật này có hiệu lực thi hành" (Luật 108/2025, khoản 3 Điều 52), trong khi cổng Bộ Tư pháp chưa ghi ngày hết hiệu lực cho văn bản cũ. Đọc câu đó bằng quy tắc thành quan hệ `thay_the`. Tại mốc hỏi từ ngày đó trở đi, văn bản cũ và bản hợp nhất của nó (khi **mọi** văn bản gốc của bản hợp nhất đều đã bị thay bởi văn bản ngoài nhóm gốc) **vẫn tìm được** (còn ngoại lệ "trừ …", quy định chuyển tiếp, câu hỏi về năm cũ) nhưng **xếp sau mọi văn bản khác**, và **ghi rõ cho người đọc**: "Đã hết hiệu lực từ 01/07/2026 theo khoản 3 Điều 52 Luật 108/2025/QH15 — cổng dữ liệu chưa ghi" — trên từng căn cứ, trong đoạn đưa cho model, ở trang Tra cứu. Mốc hỏi trước ngày đó thì văn bản cũ dùng bình thường. Không đọc: câu trong văn bản hợp nhất (chép lại từ văn bản gốc), mục chỉ hết hiệu lực một phần ("Điều 1 Nghị định …", "Chương I …"), văn bản nguồn không rõ ngày có hiệu lực, văn bản thứ hai trở đi trong câu khi nó nằm sau phần mô tả ("… hướng dẫn Luật …, Nghị định số 123/2020" — dễ nhầm văn bản được nhắc với văn bản bị thay). Bỏ sót thì an toàn hơn gắn nhầm.
 - **Ưu tiên văn bản hợp nhất** (chốt 22/10/2026 — văn bản hợp nhất thường đầy đủ hơn văn bản riêng lẻ): tại mốc hỏi, văn bản gốc đã có bản hợp nhất có chữ thì tìm trên bản hợp nhất mới nhất ban hành **không sau** mốc hỏi; ẩn văn bản gốc và các bản hợp nhất cũ hơn. Bản hợp nhất ban hành sau mốc hỏi không dùng — nó gộp cả sửa đổi đến sau.
 - **Embedding chạy trên máy**, không qua API.
 - **Hiểu câu hỏi** (chốt 18/10/2026):

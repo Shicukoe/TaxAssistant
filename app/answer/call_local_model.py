@@ -1,4 +1,5 @@
-"""Chỗ duy nhất gọi model (quy tắc bất biến số 7): llama-server qua API kiểu OpenAI.
+"""Chỗ duy nhất gọi model (quy tắc bất biến số 7): llama-server qua API kiểu OpenAI — model viết (cổng 9931)
+và model embedding BGE-M3 (cổng 9932).
 
 Trả về nội dung cùng usage (token, thời gian chạy) để bước cuối của luồng ghi vào usage_log —
 node không ghi database giữa chừng (docs/code-standards.md).
@@ -64,3 +65,13 @@ async def ask_local_model_for_json(messages: list[dict], json_schema: dict, *, t
         messages, temperature=temperature, max_tokens=max_tokens, json_schema=json_schema
     )
     return json.loads(content), usage
+
+
+async def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Vector BGE-M3 (đã chuẩn hoá L2 — README llama-server, /v1/embeddings) từ llama-server thứ hai, cổng 9932."""
+    async with httpx.AsyncClient(timeout=config.LLM_TIMEOUT_SECONDS) as client:
+        response = await client.post(f"{config.EMBEDDING_BASE_URL}/embeddings",
+                                     json={"model": config.EMBEDDING_MODEL, "input": texts})
+        response.raise_for_status()
+    data = sorted(response.json()["data"], key=lambda item: item["index"])
+    return [item["embedding"] for item in data]

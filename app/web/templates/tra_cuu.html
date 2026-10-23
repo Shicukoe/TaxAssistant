@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Tra cứu — Tax Assistant{% endblock %}
+{% block content %}
+<div class="page">
+<h1 class="page-title">Tra cứu văn bản</h1>
+<form class="filters" method="get" action="/tra-cuu">
+  <div class="field">
+    <label for="q">Số hiệu hoặc tên văn bản</label>
+    <input id="q" name="q" value="{{ q }}" placeholder="Ví dụ: 125/2020, thuế môn bài, thu nhập doanh nghiệp">
+  </div>
+  <div class="field">
+    <label for="cap">Loại văn bản</label>
+    <select id="cap" name="cap">
+      <option value="">Tất cả (xếp theo thứ bậc)</option>
+      {% for value, name in ranks.items() %}
+      <option value="{{ value }}" {% if cap == value %}selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit">Tìm</button>
+  <label class="check"><input type="checkbox" name="con_hieu_luc" value="1" {% if con_hieu_luc %}checked{% endif %}>
+    Chỉ văn bản còn hiệu lực hôm nay</label>
+</form>
+
+{% if not documents %}
+<p>Không có văn bản nào khớp.</p>
+{% endif %}
+{% set ns = namespace(current=None) %}
+<ul class="doc-list">
+{% for d in documents %}
+  {% if d.cap != ns.current %}{% set ns.current = d.cap %}<li class="group">{{ d.ten_cap }}</li>{% endif %}
+  <li class="doc">
+    <a href="/van-ban/{{ d.id }}"><strong>{{ d.loai or '' }} {{ d.so_hieu or '(không số)' }}</strong></a>
+    {% if d.ngay_ban_hanh %}<span class="muted">· {{ d.ngay_ban_hanh.strftime('%d/%m/%Y') }}</span>{% endif %}
+    <div>{{ d.tieu_de or '' }}</div>
+    {% for text, kind in d.nhan %}<span class="label label-{{ kind }}">{{ text }}</span>{% endfor %}
+  </li>
+{% endfor %}
+</ul>
+
+<nav class="pager">
+  {% if page > 1 %}<a href="?q={{ q|urlencode }}&cap={{ cap if cap is not none else '' }}&con_hieu_luc={{ 1 if con_hieu_luc else 0 }}&trang={{ page - 1 }}">← Trang trước</a>{% endif %}
+  <span>Trang {{ page }}</span>
+  {% if has_next %}<a href="?q={{ q|urlencode }}&cap={{ cap if cap is not none else '' }}&con_hieu_luc={{ 1 if con_hieu_luc else 0 }}&trang={{ page + 1 }}">Trang sau →</a>{% endif %}
+</nav>
+</div>
+{% endblock %}

@@ -16,11 +16,16 @@ from collections.abc import Callable
 
 import dagster as dg
 
+from app.ingest import check_document_quality as quality
+from app.ingest import check_golden_cases as golden
 from app.ingest import check_sources as sources
 from app.ingest import discover_from_other_sources as other_sources
 from app.ingest import download_from_congbao as congbao
 from app.ingest import download_moj_documents as moj
+from app.ingest import embed_chunks as embeddings
 from app.ingest import link_consolidated_documents as consolidated
+from app.ingest import link_replaced_documents as replaced
+from app.ingest import read_attachments as attachments
 from app.ingest import save_to_database as database
 from app.ingest.stage_report import StageReport
 
@@ -171,14 +176,48 @@ def congbao_documents() -> dg.MaterializeResult:
 
 
 @dg.asset(
+    group_name="file_dinh_kem",
+    deps=[moj_attachments, congbao_documents, other_source_documents],
+    description="Apache Tika đọc .doc/RTF/PDF chưa đọc thành XHTML (cần Java + Tika, xem .env); đếm dòng phải sửa mã TCVN3.",
+    check_specs=[_failure_check_spec("converted_attachments", MAX_FAILURE_SHARE_DOWNLOAD, blocking=False)],
+)
+def converted_attachments() -> dg.MaterializeResult:
+    return _materialize(attachments.convert_attachments,
+                        lambda r: [_failure_share_check(r, MAX_FAILURE_SHARE_DOWNLOAD, blocking_severity=False)])
+
+
+@dg.asset(
     group_name="database",
-    deps=[moj_documents],
-    description="Nạp văn bản thuế mới hoặc đã đổi vào PostgreSQL (cần .env).",
-    check_specs=[_failure_check_spec("database_documents", MAX_FAILURE_SHARE_DATABASE, blocking=True)],
+    deps=[moj_documents, converted_attachments],
+    description="Nạp văn bản thuế mới hoặc đã đổi vào PostgreSQL (cần .env). JSON rỗng → chữ từ file đính kèm. "
+                "Kiểm chất lượng từng văn bản; trượt kiểm nặng → cách ly (tìm được, không trích).",
+    check_specs=[
+        _failure_check_spec("database_documents", MAX_FAILURE_SHARE_DATABASE, blocking=True),
+        dg.AssetCheckSpec("van_ban_cach_ly", asset="database_documents",
+                          description="Văn bản đang cách ly chờ xem tay (python -m app.ingest.check_document_quality)."),
+        dg.AssetCheckSpec("bo_do_co_dinh", asset="database_documents",
+                          description="Mọi ca lỗi đã gặp thật vẫn được xử lý đúng (python -m app.ingest.check_golden_cases)."),
+    ],
 )
 def database_documents() -> dg.MaterializeResult:
-    return _materialize(database.save_documents_to_database,
-                        lambda r: [_failure_share_check(r, MAX_FAILURE_SHARE_DATABASE)])
+    def checks(report: StageReport) -> list[dg.AssetCheckResult]:
+        quarantined = quality.quarantine_list()
+        failed_cases = [(d, e) for _, d, e in golden.run_cases() if e is not None]
+        return [
+            _failure_share_check(report, MAX_FAILURE_SHARE_DATABASE),
+            dg.AssetCheckResult(
+                check_name="bo_do_co_dinh", passed=not failed_cases, severity=dg.AssetCheckSeverity.ERROR,
+                metadata={"so_ca_truot": len(failed_cases),
+                          "ca_truot": "\n".join(f"{d} → {e}" for d, e in failed_cases) or "không có"},
+            ),
+            # Luôn cảnh báo khi còn văn bản cách ly — để hàng đợi xem tay luôn hiện trên giao diện.
+            dg.AssetCheckResult(
+                check_name="van_ban_cach_ly", passed=not quarantined, severity=dg.AssetCheckSeverity.WARN,
+                metadata={"so_van_ban": len(quarantined),
+                          "danh_sach": "\n".join(f"{u} {s} — {r[:120]}" for u, s, _, r in quarantined[:50]) or "không có"},
+            ),
+        ]
+    return _materialize(database.save_documents_to_database, checks)
 
 
 @dg.asset(
@@ -197,6 +236,28 @@ def consolidated_links() -> dg.MaterializeResult:
                                     severity=dg.AssetCheckSeverity.WARN,
                                     metadata={"so_van_ban_lech": report.counts["json_lech_van_ban"]})]
     return _materialize(consolidated.link_consolidated_documents, checks)
+
+
+@dg.asset(
+    group_name="database",
+    deps=[database_documents],
+    description="Văn bản bị văn bản mới tuyên bố hết hiệu lực (thay_the) — tìm kiếm xếp sau và ghi rõ nhãn.",
+    check_specs=[_failure_check_spec("replaced_links", MAX_FAILURE_SHARE_DATABASE, blocking=False)],
+)
+def replaced_links() -> dg.MaterializeResult:
+    return _materialize(replaced.link_replaced_documents,
+                        lambda r: [_failure_share_check(r, MAX_FAILURE_SHARE_DATABASE, blocking_severity=False)])
+
+
+@dg.asset(
+    group_name="database",
+    deps=[database_documents],
+    description="Vector BGE-M3 cho các đoạn mới hoặc vừa nạp lại (cần server embedding: bash scripts/run_embedding_server.sh).",
+    check_specs=[_failure_check_spec("chunk_embeddings", MAX_FAILURE_SHARE_DATABASE, blocking=False)],
+)
+def chunk_embeddings() -> dg.MaterializeResult:
+    return _materialize(embeddings.embed_pending_chunks,
+                        lambda r: [_failure_share_check(r, MAX_FAILURE_SHARE_DATABASE, blocking_severity=False)])
 
 
 # Chạy tuần tự trong một tiến trình: các công đoạn cùng gọi một máy chủ thì không chạy song song,
@@ -220,8 +281,8 @@ weekly_update = dg.ScheduleDefinition(
 
 defs = dg.Definitions(
     assets=[source_health, other_source_documents,
-            moj_document_list, moj_documents, moj_attachments, congbao_documents, database_documents,
-            consolidated_links],
+            moj_document_list, moj_documents, moj_attachments, congbao_documents, converted_attachments,
+            database_documents, consolidated_links, replaced_links, chunk_embeddings],
     jobs=[update_all_data],
     schedules=[weekly_update],
 )

@@ -6,7 +6,9 @@ Chạy (sau download_moj_documents, cần .env; trong pipeline: công đoạn sa
 Chỉ nạp văn bản mới hoặc đã đổi: mỗi dòng documents ghi raw_sha256 (bản gốc) và parser_version
 (bộ tách) — giống cả hai thì bỏ qua. Văn bản đổi thì xoá rồi nạp lại trong một transaction.
 Một văn bản lỗi chỉ được ghi vào báo cáo, các văn bản khác vẫn nạp.
-Văn bản chưa tách được (không có Điều, chỉ có file đính kèm) vẫn có dòng trong documents với
+Văn bản không có Điều được cắt theo mục hoặc theo độ dài (split_articles) — cột level phân biệt.
+JSON rỗng → chữ lấy từ file đính kèm (read_attachments): Word/RTF là 'native', PDF là 'ocr'.
+Văn bản chưa có chữ (PDF scan, file chưa chuyển) vẫn có dòng trong documents với
 text_origin='none' — biết là nó tồn tại, chỉ chưa tìm/trích được.
 """
 
@@ -21,7 +23,9 @@ import psycopg
 from app import config
 from app.db.setup_database import apply_migrations
 from app.ingest import download_moj_documents as moj
-from app.ingest.split_articles import PARSER_VERSION, Article, split_html_into_articles
+from app.ingest import read_attachments
+from app.ingest.check_document_quality import CheckResult, check_document
+from app.ingest.split_articles import PARSER_VERSION, Article, TextLine, html_to_text_lines, split_into_articles
 from app.ingest.stage_report import StageReport
 
 log = logging.getLogger(__name__)
@@ -47,9 +51,26 @@ def _citation_numbers(articles: list[Article]) -> list[str]:
     return numbers
 
 
-def save_document(conn: psycopg.Connection, doc: dict, source_url: str, raw_sha256: str) -> int:
-    """Nạp một văn bản (xoá bản cũ nếu có) trong một transaction. Trả về số Điều đã nạp."""
-    articles = split_html_into_articles(doc["documentContent"]["content"]) if moj.has_text_content(doc) else []
+def read_document_text(doc: dict, attachment: read_attachments.Attachment | None
+                       ) -> tuple[list[TextLine], list[Article], str]:
+    """Chữ của văn bản: HTML của cổng; JSON rỗng thì file đính kèm. Trả về (các dòng, các Điều, text_origin).
+
+    Chữ từ PDF, hoặc từ Word nhưng còn sót mã TCVN3, là 'ocr' — chỉ để tìm, không trích (quy tắc bất biến số 2).
+    """
+    if attachment is None:
+        lines = html_to_text_lines(doc["documentContent"]["content"]) if moj.has_text_content(doc) else []
+        origin = "native"
+    else:
+        lines = read_attachments.read_attachment_lines(attachment)
+        garbled = attachment.text_origin == "native" and read_attachments.looks_garbled(lines)
+        origin = "ocr" if attachment.text_origin == "ocr" or garbled else "native"
+    articles = split_into_articles(lines, quotes_reliable=not (attachment and attachment.text_origin == "ocr"))
+    return lines, articles, origin if articles else "none"
+
+
+def save_document(conn: psycopg.Connection, doc: dict, source_url: str, raw_sha256: str,
+                  articles: list[Article], text_origin: str, checks: list[CheckResult]) -> None:
+    """Nạp một văn bản (xoá bản cũ nếu có) cùng kết quả kiểm chất lượng, trong một transaction."""
     doc_group = doc.get("docGroup") or ("CV" if doc.get("isAdministrativeDocument") else "UNKNOWN")
 
     with conn.transaction():
@@ -61,8 +82,8 @@ def save_document(conn: psycopg.Connection, doc: dict, source_url: str, raw_sha2
             insert into documents (source, source_uuid, source_url, so_hieu, loai, doc_group, co_quan,
                                    linh_vuc, ngay_ban_hanh, eff_from, eff_to, eff_status_code,
                                    is_consolidated, is_administrative, text_origin, raw_path,
-                                   raw_sha256, parser_version)
-            values ('moj_gateway', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                   raw_sha256, parser_version, tieu_de)
+            values ('moj_gateway', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning id
             """,
             (
@@ -70,9 +91,9 @@ def save_document(conn: psycopg.Connection, doc: dict, source_url: str, raw_sha2
                 doc.get("agencyName"), [f["name"] for f in doc.get("documentFields") or []] or None,
                 _to_date(doc.get("issueDate")), _to_date(doc.get("effFrom")), _to_date(doc.get("effTo")),
                 (doc.get("effStatus") or {}).get("code"), bool(doc.get("isConsolidatedDocument")),
-                bool(doc.get("isAdministrativeDocument")), "native" if articles else "none",
+                bool(doc.get("isAdministrativeDocument")), text_origin,
                 str((moj.MOJ_RAW_DIR / f"{doc['id']}.json").relative_to(config.PROJECT_ROOT)),
-                raw_sha256, PARSER_VERSION,
+                raw_sha256, PARSER_VERSION, (doc.get("title") or "").strip() or None,
             ),
         ).fetchone()[0]
 
@@ -83,7 +104,7 @@ def save_document(conn: psycopg.Connection, doc: dict, source_url: str, raw_sha2
             article_id = uuid.uuid4()
             ordinal += 1
             provision_rows.append((
-                article_id, document_id, article.markup_id, "dieu", citation_number, article.title,
+                article_id, document_id, article.markup_id, article.level, citation_number, article.title,
                 None, ordinal, article.text, article.found_by,
             ))
             part_ids = []
@@ -100,6 +121,10 @@ def save_document(conn: psycopg.Connection, doc: dict, source_url: str, raw_sha2
 
         with conn.cursor() as cur:
             cur.executemany(
+                "insert into document_checks (document_id, check_name, passed, severity, detail) values (%s, %s, %s, %s, %s)",
+                [(document_id, c.name, c.passed, c.severity, c.detail or None) for c in checks],
+            )
+            cur.executemany(
                 """insert into provisions (id, document_id, provision_uuid, level, so, ten, parent_id,
                                            ordinal, text, parsed_by)
                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
@@ -111,14 +136,13 @@ def save_document(conn: psycopg.Connection, doc: dict, source_url: str, raw_sha2
                     "insert into chunks (document_id, dieu_provision_id, text) values (%s, %s, %s) returning id",
                     (document_id, article_id, article.text),
                 ).fetchone()[0]
-                position_rows = [(chunk_id, article_id, "dieu", citation_number, 0, len(article.text))]
+                position_rows = [(chunk_id, article_id, article.level, citation_number, 0, len(article.text))]
                 position_rows += [(chunk_id, pid, p.level, p.number, p.start, p.end) for pid, p in parts]
                 cur.executemany(
                     """insert into chunk_positions (chunk_id, provision_id, level, so, char_start, char_end)
                        values (%s, %s, %s, %s, %s, %s)""",
                     position_rows,
                 )
-    return len(articles)
 
 
 def save_documents_to_database() -> StageReport:
@@ -139,14 +163,23 @@ def save_documents_to_database() -> StageReport:
                 doc = json.loads(body)["data"]
                 if not moj.is_tax_document(doc):
                     continue
-                raw_sha256 = hashlib.sha256(body).hexdigest()
+                # Băm cả file đính kèm: file mới tải hoặc mới chuyển .docx xong thì văn bản được nạp lại.
+                attachment = None if moj.has_text_content(doc) else read_attachments.find_attachment(doc)
+                raw_sha256 = hashlib.sha256(body + (attachment.source.read_bytes() if attachment else b"")).hexdigest()
                 if loaded.get(doc["id"]) == f"{raw_sha256}|{PARSER_VERSION}":
                     report.count("khong_doi")
                     continue
-                articles = save_document(conn, doc, source_urls.get(doc["id"], ""), raw_sha256)
+                lines, articles, text_origin = read_document_text(doc, attachment)
+                consolidated = doc.get("docGroup") == "VBHN"
+                checks = check_document(lines, articles, _citation_numbers(articles), consolidated) if articles else []
+                save_document(conn, doc, source_urls.get(doc["id"], ""), raw_sha256, articles, text_origin, checks)
+                for check in checks:
+                    report.count(f"truot_{check.name}", not check.passed)
                 report.count("nap_lai" if doc["id"] in loaded else "nap_moi")
-                report.count("so_dieu_da_nap", articles)
-                report.count("van_ban_chua_tach_duoc", articles == 0)
+                report.count("so_dieu_da_nap", len(articles))
+                report.count("van_ban_chua_tach_duoc", not articles)
+                if attachment and articles:
+                    report.count("chu_tu_file_word" if text_origin == "native" else "chu_tu_file_chi_de_tim")
             except Exception as e:  # một văn bản lỗi không được chặn các văn bản khác
                 report.fail(path.name, e, log)
             done = sum(report.counts[k] for k in ("khong_doi", "nap_lai", "nap_moi")) + report.failure_count

@@ -169,8 +169,11 @@ python -m app.db.check_database    # should print PASS
 
 # Answer model (self-hosted): llama.cpp build + GGUF live outside the repo (default D:/models)
 bash scripts/run_model_server.sh     # llama-server on 127.0.0.1:9931, OpenAI-compatible API + built-in chat UI
+bash scripts/run_embedding_server.sh # BGE-M3 embeddings on 127.0.0.1:9932 (semantic search; falls back to keywords if off)
+python -m app.answer.measure_search  # recall@5 / MRR@10 for keyword / semantic / hybrid search
 pip install -e ".[answer]"
 bash scripts/chat_demo.sh            # terminal chat over the law database, prints the state after every step
+bash scripts/run_web_demo.sh         # web app (Ask + Library) on port 8000 for the home Wi-Fi; prints the LAN address
 
 # Data pipeline (run in order)
 pip install -e ".[pipeline]"
@@ -212,10 +215,12 @@ dagster_home/dagster.yaml                Dagster config (run history and logs li
 scripts/run_pipeline.sh                  run the pipeline once, or open Dagster (UI + weekly schedule)
 scripts/run_model_server.sh              start llama-server with the answer model (flags documented inline)
 scripts/chat_demo.sh                     terminal demo of the answer graph: chat + per-step debug output
+scripts/run_web_demo.sh                  web demo for the home network (app/web): Ask + Library
 app/answer/check_claim_support.py        guardrail: each conclusion sentence must be entailed by the cited clause (AlignScore-style, multilingual NLI on CPU; shadow mode until calibrated)
 app/ingest/check_sources.py              source registry + live health probe per site (checks content, not just HTTP 200)
 app/ingest/discover_from_other_sources.py  congbao RSS + vanban.chinhphu.vn → new tax documents, independent of the main source
 app/ingest/link_consolidated_documents.py  consolidated documents → base/amending relations; flags JSON whose content is a different document
+app/ingest/link_replaced_documents.py      "… hết hiệu lực kể từ …" in a new law's effect article → replacement relations (old law ranked last, labelled)
 CLAUDE.md                                entry point for AI coding agents: what to read, in what order
 docs/                                    design documents (Vietnamese)
   project-overview.md          product, scope, success criteria

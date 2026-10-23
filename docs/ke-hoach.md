@@ -51,7 +51,9 @@ Nhịp làm: 9–16 giờ/tuần. Tổng ước tính: 3–4 tháng.
 
 ## 7. Giao diện cho mẹ — *1–2 tuần*
 
-**Làm:** web app, lịch sử câu hỏi, trang hiệu năng, các nhãn bắt buộc (hết hiệu lực · công văn · OCR · không có căn cứ), dòng nhắc không nêu tên khách, cài mạng riêng để mẹ truy cập.
+**Làm sớm** (chốt 22/10/2026): ngay sau bốn lớp giữ dữ liệu sạch (`architecture.md`, Dữ liệu), làm một web app FastAPI cho mạng nhà gồm **Tra cứu** và **Hỏi** (bản demo hiện tại). Phần còn lại của bước này (trang hiệu năng, lịch sử, nhãn đầy đủ) giữ nguyên chỗ.
+
+**Làm:** web app (Hỏi + Tra cứu), lịch sử câu hỏi, trang hiệu năng, các nhãn bắt buộc (hết hiệu lực · công văn · OCR · không có căn cứ), dòng nhắc không nêu tên khách, cài mạng riêng để mẹ truy cập.
 **Xong khi:** mẹ dùng được trên máy tính và điện thoại.
 
 ## 8. Đánh giá vi phạm và so sánh theo thời gian — *1–2 tuần*

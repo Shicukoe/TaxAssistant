@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ d.loai or '' }} {{ d.so_hieu or '' }} — Tax Assistant{% endblock %}
+{% block content %}
+<div class="page">
+<p><a href="/tra-cuu">← Danh sách văn bản</a></p>
+<h1>{{ d.loai or '' }} {{ d.so_hieu or '(không số)' }}</h1>
+<p class="title">{{ d.tieu_de or '' }}</p>
+<dl class="meta">
+  {% if d.co_quan %}<dt>Cơ quan</dt><dd>{{ d.co_quan }}</dd>{% endif %}
+  {% if d.ngay_ban_hanh %}<dt>Ban hành</dt><dd>{{ d.ngay_ban_hanh.strftime('%d/%m/%Y') }}</dd>{% endif %}
+  {% if d.eff_from %}<dt>Hiệu lực từ</dt><dd>{{ d.eff_from.strftime('%d/%m/%Y') }}</dd>{% endif %}
+  {% if d.eff_to %}<dt>Hết hiệu lực</dt><dd>{{ d.eff_to.strftime('%d/%m/%Y') }}</dd>{% endif %}
+</dl>
+<p>{% for text, kind in d.nhan %}<span class="label label-{{ kind }}">{{ text }}</span>{% endfor %}</p>
+<p class="links">
+  {% if d.co_ban_goc %}<a href="/ban-goc/{{ d.id }}">Tải bản gốc (PDF/Word)</a>{% endif %}
+  {% if d.source_url %}<a href="{{ d.source_url }}" rel="noopener" target="_blank">Xem trên trang nguồn</a>{% endif %}
+</p>
+
+{% if d.lien_quan %}
+<section class="related">
+  <h2>Văn bản liên quan</h2>
+  <ul>
+  {% for r in d.lien_quan %}
+    <li>
+      {% if r.relation_type == 'hop_nhat' and r.huong == 'tu' %}Bản hợp nhất:
+      {% elif r.relation_type == 'hop_nhat' %}Hợp nhất từ văn bản gốc:
+      {% elif r.relation_type in ('thay_the', 'bai_bo') and r.huong == 'tu' %}Hết hiệu lực từ {{ r.effective_from.strftime('%d/%m/%Y') }} theo {{ r.source_label }}:
+      {% elif r.relation_type in ('thay_the', 'bai_bo') %}Làm hết hiệu lực ({{ r.source_label }}, từ {{ r.effective_from.strftime('%d/%m/%Y') }}):
+      {% elif r.huong == 'tu' %}Được sửa đổi bởi:
+      {% else %}Sửa đổi văn bản:{% endif %}
+      <a href="/van-ban/{{ r.id }}">{{ r.so_hieu }}</a>
+      {% if r.ngay_ban_hanh %}<span class="muted">({{ r.ngay_ban_hanh.strftime('%d/%m/%Y') }})</span>{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if d.phan %}
+<nav class="toc">
+  <h2>Mục lục</h2>
+  <ol>{% for p in d.phan %}<li><a href="#{{ p.neo }}">{{ p.nhan }}{% if p.ten %}. {{ p.ten }}{% endif %}</a></li>{% endfor %}</ol>
+</nav>
+<section class="law">
+  {% for p in d.phan %}
+  <article id="{{ p.neo }}" class="provision">
+    {% for line in p.dong %}
+    <p {% if line.neo %}id="{{ line.neo }}" class="{{ line.cap }}"{% elif loop.first %}class="heading"{% endif %}>{{ line.text }}</p>
+    {% endfor %}
+  </article>
+  {% endfor %}
+</section>
+{% elif d.text_origin == 'ocr' %}
+<p>Văn bản này là bản scan hoặc PDF — chữ đọc từ PDF chỉ dùng để tìm, không hiện ở đây vì có thể sai (ví dụ "8.000.000" thành "3.000.000"). Xem <a href="/ban-goc/{{ d.id }}">bản gốc</a>.</p>
+{% else %}
+<p>Chưa đọc được chữ của văn bản này. Xem bản gốc ở trang nguồn.</p>
+{% endif %}
+</div>
+{% endblock %}

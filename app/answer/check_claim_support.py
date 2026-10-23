@@ -7,10 +7,17 @@ tiếng Anh → hàm chấm là model NLI đa ngôn ngữ (config.NLI_MODEL), x�
 Ngữ cảnh = chữ của KHOẢN chứa mỗi trích dẫn đã qua kiểm (guardrail a), không chỉ câu trích — khoản 4 "áp dụng cho
 ai" nằm ở câu dẫn của khoản. Bắt lỗi "suy luận sai": trích đúng nguyên văn nhưng áp cho đối tượng khác.
 Câu dưới ngưỡng chỉ bị gắn cờ, không xoá câu trả lời. Chạy CPU: không tranh VRAM với llama-server.
+
+Giới hạn chạy (23/10/2026): câu trả lời nhiều ý (~20 câu × khoản dài) chạy hơn 10 phút → mỗi câu chỉ chấm với
+MAX_CHUNKS_PER_CLAIM đoạn có nhiều từ chung nhất (lệch khỏi AlignScore, vốn chấm mọi đoạn) và dừng sau
+TIME_BUDGET_SECONDS; câu chưa kịp chấm không tính vào điểm. Guardrail này không bao giờ làm hỏng câu trả lời.
+
+Chạy bài tự kiểm (không cần model): python -m app.answer.check_claim_support
 """
 
 import asyncio
 import re
+import time
 from functools import lru_cache
 
 import psycopg
@@ -19,6 +26,9 @@ from app import config
 from app.answer.search_articles import load_chunk_texts
 
 CHUNK_TOKENS = 350  # theo AlignScore
+MAX_CHUNKS_PER_CLAIM = 3
+TIME_BUDGET_SECONDS = 60  # node có timeout 120 giây (answer_graph)
+WORD = re.compile(r"\w+")
 SENTENCE_END = re.compile(r"(?<=[.!?;:])\s+(?=[A-ZĐÀ-Ỹ0-9\"“(-])")
 
 
@@ -29,7 +39,9 @@ def load_nli_model():
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(config.NLI_MODEL)
-    model = AutoModelForSequenceClassification.from_pretrained(config.NLI_MODEL).eval()
+    # float32: transformers 5 nạp theo kiểu ghi trong config của model (float16), mà CPU không có phép nhân ma trận
+    # float16 — 512 token mất 7,7 giây thay vì 0,94 giây (đo 23/10/2026, Ryzen 7 5800H)
+    model = AutoModelForSequenceClassification.from_pretrained(config.NLI_MODEL, dtype=torch.float32).eval()
     # Lấy chỉ số nhãn từ config của model, không đoán thứ tự.
     labels = {name.lower(): index for index, name in model.config.id2label.items()}
     return torch, tokenizer, model, labels["entailment"], labels["contradiction"]
@@ -55,13 +67,24 @@ def split_into_chunks(text: str, tokenizer) -> list[str]:
     return chunks
 
 
+def closest_chunks(claim: str, chunks: list[str]) -> list[str]:
+    """MAX_CHUNKS_PER_CLAIM đoạn có nhiều từ chung với câu nhất — giữ thứ tự gốc."""
+    words = set(WORD.findall(claim.lower()))
+    ranked = sorted(range(len(chunks)), key=lambda i: -len(words & set(WORD.findall(chunks[i].lower()))))
+    return [chunks[i] for i in sorted(ranked[:MAX_CHUNKS_PER_CLAIM])]
+
+
 def score_claims(claims: list[str], context: str) -> list[dict]:
-    """Mỗi câu: điểm ủng hộ = max P(entailment) trên các đoạn; kèm P(contradiction) của đoạn đó."""
+    """Mỗi câu: điểm ủng hộ = max P(entailment) trên các đoạn gần nhất; kèm P(contradiction) của đoạn đó.
+    Hết TIME_BUDGET_SECONDS thì dừng — chỉ trả các câu đã chấm."""
     torch, tokenizer, model, entail_index, contradict_index = load_nli_model()
-    chunks = split_into_chunks(context, tokenizer)
-    results = []
+    all_chunks = split_into_chunks(context, tokenizer)
+    results, started = [], time.monotonic()
     with torch.inference_mode():
         for claim in claims:
+            if time.monotonic() - started > TIME_BUDGET_SECONDS:
+                break
+            chunks = closest_chunks(claim, all_chunks)
             inputs = tokenizer(chunks, [claim] * len(chunks), truncation="only_first", max_length=512,
                                padding=True, return_tensors="pt")
             probabilities = torch.softmax(model(**inputs).logits, dim=-1)
@@ -83,7 +106,7 @@ async def load_clause_context(citations: list[dict]) -> str:
         for citation in verified:
             cursor = await conn.execute(
                 "select char_start, char_end from chunk_positions "
-                "where chunk_id = %s and level in ('khoan', 'dieu') and char_start <= %s and %s < char_end "
+                "where chunk_id = %s and level in ('khoan', 'dieu', 'muc', 'doan') and char_start <= %s and %s < char_end "
                 "order by (level = 'khoan') desc, char_end - char_start limit 1",
                 (citation["chunk_id"], citation["vi_tri_ky_tu"], citation["vi_tri_ky_tu"]),
             )
@@ -104,6 +127,8 @@ async def check_claim_support(state: dict) -> dict:
     if not claims or not context:
         return {"claim_support": [], "support_score": None}
     results = await asyncio.to_thread(score_claims, claims, context)  # model đồng bộ → chạy ở thread riêng
+    if not results:
+        return {"claim_support": [], "support_score": None, "claim_unscored": len(claims)}
     for result in results:
         result["dat"] = result["diem_ung_ho"] >= config.NLI_SUPPORT_THRESHOLD
     support_score = round(sum(r["diem_ung_ho"] for r in results) / len(results), 3)
@@ -112,4 +137,18 @@ async def check_claim_support(state: dict) -> dict:
     # Chế độ đo: chưa hiện cảnh báo cho tới khi ngưỡng được hiệu chỉnh trên tập kiểm định (config.NLI_WARNINGS_VISIBLE).
     visible = warnings if config.NLI_WARNINGS_VISIBLE else []
     answer_text = state["answer_text"] + ("\n" + "\n".join(visible) if visible else "")
-    return {"claim_support": results, "support_score": support_score, "answer_text": answer_text}
+    return {"claim_support": results, "support_score": support_score, "answer_text": answer_text,
+            "claim_unscored": len(claims) - len(results)}
+
+
+def self_check() -> None:
+    chunks = ["Phạt 20% số tiền thuế khai thiếu.", "Hóa đơn điện tử là hóa đơn có mã.", "Thời hạn nộp hồ sơ khai thuế quý.",
+              "Chứng từ thanh toán không dùng tiền mặt từ 05 triệu đồng.", "Khai bổ sung hồ sơ khai thuế."]
+    picked = closest_chunks("Khoản chi từ 05 triệu đồng phải có chứng từ thanh toán không dùng tiền mặt", chunks)
+    assert len(picked) == MAX_CHUNKS_PER_CLAIM and chunks[3] in picked, picked
+    assert closest_chunks("x", chunks[:2]) == chunks[:2], "ít đoạn hơn giới hạn → lấy hết"
+    print("PASS")
+
+
+if __name__ == "__main__":
+    self_check()

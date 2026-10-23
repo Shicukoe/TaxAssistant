@@ -61,7 +61,17 @@ Không dùng model (biểu thức chính quy), nhưng sai ở đây làm hỏng 
 
 - **Guardrail:** vị trí khoản/điểm phải trùng ranh giới dòng (`split_articles.py`, `self_check`).
 - **Bài đo:** so với markup của cổng Bộ Tư pháp. Kết quả 02/10/2026: bắt được 99,8% Điều, 98,1% khoản, 98,0% điểm. Chi tiết ở `nguon-du-lieu.md`.
-- **Còn thiếu:** bài đo cho phần cắt theo đề mục (văn bản không có Điều) — làm cùng lúc viết phần đó.
+- **Cắt theo đề mục** (văn bản không có Điều): cổng không có markup cho văn bản cũ nên không có đáp án tự động. Đo ba thứ: (1) **độ phủ** — phần chữ từ đề mục đầu tiên tới khối chữ ký nằm trong một mục nào đó; (2) **đề mục bị bỏ** — dòng trông như đề mục ("III.", "B.") nhưng không được nhận vì sai thứ tự, liệt kê ra để xem bằng tay; (3) **tự tay xem 10 văn bản** chọn ngẫu nhiên, so mục cắt ra với bản gốc.
+  - **Kết quả 22/10/2026** (700 văn bản: 571 cắt theo mục, 129 theo độ dài): độ phủ **96,4%**; **124 dòng giống đề mục bị bỏ ở 35/571 văn bản** — phần lớn đúng là phải bỏ (dòng trong bảng "II. Đô thị loại II", biểu mẫu "I. PHẦN TỰ KÊ KHAI"), còn lại là lỗi thật: số La Mã dùng ở hai cấp (07-TC/TCT: danh sách I…VIII loại tài nguyên nằm trong mục II), văn bản gốc đánh trùng số (29/TC-TCT: hai mục III). Hệ quả: chữ vẫn tìm và trích nguyên văn được, nhưng **nhãn mục có thể sai** ở các văn bản này. 10 mẫu: 9 sạch, 1 sót một đề mục (02/2007/TT-BTM, "III. ĐIỀU KHOẢN THI HÀNH").
+- **Phép kiểm chất lượng từng văn bản** (lớp 2, `check_document_quality.py`, đo 22/10/2026 trên 2.611 văn bản có chữ): `ma_chu` trượt 5, `thu_tu_de_muc` 110, `do_phu` 63, `doan_qua_dai` 98 → **115 văn bản cách ly** (81 chữ thật, 34 PDF). Bắt được lỗi **chưa ai viết quy tắc cho**: HTML của cổng còn chữ TCVN3 (90/2004/QĐ-BTC "Dông cô tay cÇm"); chú thích cuối của văn bản hợp nhất bị tách thành Điều ("[20] Điều 44 của Luật…", "Điều 7, Điều 8 của Nghị định…", Điều trong đoạn trích của chú thích — 113/VBHN-VPQH, 27/2026/VBHN-NĐ-BTC). Báo nhầm đã sửa: dấu nhân "×" trong công thức trùng mã TCVN3 của "ì". Ngưỡng `do_phu` 90%, `doan_qua_dai` 20.000 ký tự là tạm.
+- **Lớp 1 — đo Apache Tika 4.1.0** (Java Temurin 21, 22/10/2026) trên đúng 317 file Word/RTF + 141 PDF, so với Word + pypdf:
+  - **Word/RTF:** chữ phần thân khớp ≥ 90% ở 304/317 file; 13 file lệch vì Tika đọc thêm header/footer trang ("Công báo số… ngày…"). Chữ Tika thô còn 290 dòng mã TCVN3 (phần lớn là header RTF — Tika không chuyển header), sau bộ sửa TCVN3 của dự án còn 7 dòng — bằng Word. XHTML của Tika đánh dấu `div class="header|footer"` cho Word 97 (lọc được), RTF thì không.
+  - **PDF:** tỷ lệ chữ hợp lệ (chữ có trong từ vựng ≥ 3 lần của 2.264 văn bản chữ thật, tính theo số chữ) **Tika 95,0% so với pypdf 90,4%**; Tika tốt hơn ở 37 file, kém hơn ở 4, ngang ở 43; 57 file cả hai gần như rỗng (ảnh scan). pypdf hay tách sai âm tiết ("c ủa", "n ăm"), Tika (PDFBox) không.
+  - Thời gian: 476 giây cho 458 file (2 tiến trình) — so với Word 92 giây + pypdf 123 giây; chỉ chạy một lần mỗi file.
+  - **Đã chuyển sang Tika** (22/10/2026). So trước/sau trên văn bản lấy chữ từ file đính kèm: 50 văn bản PDF trước đây không tách được nay tìm được; văn bản chữ Word: 285/286 giữ nguyên số đoạn, 1 tốt hơn. Bộ đo cố định thêm 2 ca cho lỗi riêng của Tika (ký tự điều khiển Word thành "�"; vùng chú thích Word sau phần thân).
+- **Lớp 4 — bộ phân loại dòng học từ markup** (scikit-learn 1.9.1: TF-IDF ký tự 1–4 + hồi quy logistic, 22/10/2026). Văn bản có markup đủ ở cấp Điều: 687; chia theo văn bản 80/20 (549 học, 138 đo, 20.193 dòng). F1 so với markup — **regex**: Điều 0,999 · khoản 0,990 · điểm 0,946 · chữ thường 0,993 (trung bình 0,982); **model**: 0,990 · 0,950 · 0,922 · 0,983 (0,961). **Regex tốt hơn ở mọi nhãn → giữ regex.** Model sai chủ yếu ở danh sách đánh số ngoài Điều ("1. Luật An ninh mạng số…" ở phần căn cứ) — nhìn từng dòng riêng lẻ thì không biết vị trí và thứ tự, regex thì biết. Thiên lệch cần biết: chọn văn bản "đủ markup" bằng cách so số Điều với regex nên cấp Điều nghiêng về regex; markup tự nó không nhất quán ở dạng "1.1." (lúc là khoản, lúc không). Thử lại khi có lý do: model có ngữ cảnh (dòng trước/sau, đang trong Điều hay không — kiểu CRF) và khi bộ đo cố định cho thấy lỗi cấu trúc mà regex không sửa được.
+- **Bộ đo cố định** (lớp 3, `check_golden_cases.py`): 14 ca, mỗi ca một lỗi gặp thật; chạy trong Dagster (bài kiểm `bo_do_co_dinh`, chặn). Mỗi lần sửa quy tắc tách còn **so trước/sau trên toàn kho**: sửa quy tắc đề mục Điều lần đầu làm mất đề mục thật "Điều 4ể Hàng hóa GIC" (dấu chấm hỏng thành chữ) và "Điều 1, Phạm vi điều chỉnh" — phát hiện nhờ so, sửa trước khi nạp. Lần cuối: 13 Điều bị bỏ, đều là Điều giả.
+  - Lỗi đã sửa trong lúc đo: "Phần A", "PHẦN B" (có chữ "Phần") ban đầu không được nhận → mục cuối của phần A nuốt cả văn bản (60/2007/TT-BTC: một mục 100.146 ký tự). Sau khi sửa, mục dài nhất 62.357 ký tự; 187/2.755 mục dài hơn 8.000 ký tự (tỷ lệ gần bằng Điều: 456/12.353).
 
 ---
 
@@ -88,7 +98,11 @@ Không dùng model (biểu thức chính quy), nhưng sai ở đây làm hỏng 
 | bkai-foundation-models/vietnamese-bi-encoder | Apache-2.0 (ghi trên model card) | Nền PhoBERT-base-v2, huấn luyện thêm 80% dữ liệu Legal Text Retrieval Zalo 2021; trên 20% còn lại: Acc@10 93,59, MRR@10 80,73 (model card tự báo). **Cần tách từ trước**; PhoBERT tối đa 256 token — Điều dài bị cắt. Nền PhoBERT-base-v2 mang giấy phép **AGPL-3.0** — giấy phép của bản phái sinh cần xem lại |
 | truro7/vn-law-embedding | Apache-2.0 | Nền halong_embedding, huấn luyện trên bộ câu hỏi luật Việt Nam; ít người dùng |
 
+**Chốt 23/10/2026:** BGE-M3 (người dùng chọn, không đo so với ứng viên khác). **Bộ đo tạm** `app/answer/search_eval_questions.json`: khoảng 20 câu do Claude soạn theo kiểu câu mẹ hay hỏi, Điều đúng tra trong database, người dùng duyệt — **chỉ để đo**, không bao giờ làm dữ liệu huấn luyện (quy tắc bất biến số 13). Thay bằng câu hỏi thật của mẹ khi có.
+
 **LEGAL-BERT** (Chalkidis và cộng sự, Findings of EMNLP 2020) **không dùng được**: huấn luyện trên 12 GB văn bản luật **tiếng Anh** (EU, Anh, Mỹ). Bản đa ngôn ngữ MultiLegalPile (Niklaus và cộng sự, ACL 2024) gồm 24 ngôn ngữ châu Âu, **không có tiếng Việt**. Đo riêng: chỉ từ khóa, chỉ embedding, kết hợp — để thấy mỗi phần đóng góp gì.
+
+**bkai vietnamese-bi-encoder — đã thử, dừng, không dùng** (23/10/2026): người dùng muốn so với BGE-M3 vì model được đánh giá cao ở luật Việt Nam. Chạy theo cấu hình gốc (tách từ bằng pyvi, mean pooling, tối đa 256 token) trên CPU — GPU đã đủ tải với hai server — sau 45 phút chưa tính xong 16.878 đoạn; người dùng chốt **dùng thẳng BGE-M3**, xoá model bkai. Lý do không quay lại: (1) BGE-M3 đã đạt recall@5 0,90 trên bộ tạm; (2) 256 token ≈ 1.000 ký tự, một nửa số đoạn dài hơn → phần sau của Điều không vào vector; (3) cần torch + pyvi trong app, BGE-M3 chạy được trên `llama-server` có sẵn.
 
 **Làm ở bước:** Tìm kiếm (bước 4) — cũng là cách chọn model embedding.
 
@@ -148,11 +162,23 @@ Thư viện cần thêm (`transformers`, `torch`, có thể `onnxruntime`) chỉ
 
 ---
 
+### Tách câu hỏi nhiều ý (`split_question.py`)
+
+**Guardrail:** câu tách ra chỉ dùng để tìm, không hiện như dữ kiện; tách hỏng hoặc trả rỗng → tìm bằng cả câu như cũ; câu ngắn một ý không qua model (bộ đo tìm kiếm hiện tại không đổi).
+
+**Bài đo:** chưa có bộ câu hỏi nhiều ý có nhãn. Tạm: với mỗi câu nhiều ý, liệt kê các mảng luật cần có (ví dụ chi phí được trừ, hóa đơn, thanh toán không dùng tiền mặt, khai bổ sung, xử phạt) → tỷ lệ mảng có ít nhất một Điều đúng trong các Điều đưa model, **trước và sau** khi tách. Thay bằng câu hỏi thật của mẹ khi có.
+
 ## 5. Xếp lại kết quả — model chạy trên máy (ĐỀ XUẤT: cross-encoder, chọn ở bước Tìm kiếm)
 
 **Guardrail:** xếp lại chỉ đổi thứ tự trong danh sách đã tìm, không thêm văn bản ngoài danh sách.
 
 **Bài đo:** recall@5 và nDCG@10 **trước và sau** khi xếp lại. Xếp lại mà làm rơi Điều đúng khỏi top 5 thì không dùng.
+
+**Khi nào cần:** reranker chỉ đổi thứ tự, không tìm thêm. `measure_search` in thêm recall@20: số câu có Điều đúng trong top 20 nhưng ngoài top 5 là phần reranker có thể cứu. Gần bằng 0 → không thêm (thêm một model, thêm thời gian, không lợi).
+
+**Văn bản bị thay (guardrail):** văn bản cũ bị văn bản mới tuyên bố hết hiệu lực xếp sau mọi văn bản khác và luôn mang nhãn ghi rõ văn bản, khoản tuyên bố — không bao giờ trích mà không có nhãn. **Bài đo:** bài tự kiểm các mẫu câu (`--check`); đọc tay toàn bộ quan hệ tìm được (vài chục) — số hiệu bị thay đúng không, ngày đúng không.
+
+**Kéo Điều được dẫn chiếu (guardrail):** chỉ dẫn chiếu trong cùng văn bản; không đọc dẫn chiếu trong văn bản sửa đổi; Điều thêm đi qua đủ guardrail trích dẫn như Điều tìm được. **Bài đo:** bài tự kiểm các mẫu câu dẫn chiếu (`--check`); tỷ lệ dẫn chiếu tìm được Điều đích trên mẫu ngẫu nhiên.
 
 **Làm ở bước:** Trả lời (bước 6).
 
@@ -167,12 +193,12 @@ Thư viện cần thêm (`transformers`, `torch`, có thể `onnxruntime`) chỉ
 | | Kiểm | Không đạt thì |
 |---|---|---|
 | a | Mỗi đoạn trích khớp **từng chữ** với một đoạn đã lưu (`chunk_positions`) | Bỏ đoạn trích (đã thiết kế) |
-| b | Văn bản/Điều được dẫn phải nằm trong các đoạn đã tìm được cho câu hỏi này | Bỏ trích dẫn đó |
-| c | **Mọi con số** trong câu trả lời (tiền, tỷ lệ, ngày, thời hạn) phải xuất hiện trong đoạn được dẫn | Gắn cờ "con số chưa có căn cứ", không hiện như căn cứ |
+| b | Văn bản/Điều được dẫn phải nằm trong các đoạn đã tìm được cho câu hỏi này | Bỏ trích dẫn đó. Chữ trích khớp nguyên văn **đúng một** đoạn khác trong danh sách (model ghi nhầm số đoạn — gặp khi có 10 đoạn, 23/10/2026) → đổi về đoạn đó; vị trí Điều/khoản lấy theo chỗ khớp |
+| c | **Mọi con số** trong câu trả lời (tiền, tỷ lệ, ngày, thời hạn) phải xuất hiện trong đoạn được dẫn. Trừ (chốt 23/10/2026): số đã có trong câu hỏi, năm của mốc thời gian, số nằm trong số hiệu văn bản được dẫn, số của chỗ dẫn ("khoản 1 Điều 9", "19/VBHN-BTC"), số thứ tự đầu dòng ("2026" của "năm 2026" hay của "25/2026/VBHN-BTC" không phải thông tin lấy từ luật). Năm khác vẫn phải có căn cứ — "áp dụng từ năm 2027" khi luật ghi 2026 là lỗi | Gắn cờ "con số chưa có căn cứ", không hiện như căn cứ |
 | d | Không có đoạn nào tìm được → trả lời "không có căn cứ trích dẫn" | Không gọi model viết câu trả lời có trích dẫn |
 | e | Nhãn hết hiệu lực, công văn, OCR gắn theo dữ liệu, không theo lời model | — |
 | f | `llama-server` không trả lời trong thời gian chờ, hoặc hết bộ nhớ GPU | Báo lỗi rõ cho mẹ, không trả câu trả lời dở |
-| g | **Mỗi câu trong kết luận phải được căn cứ ủng hộ** (chốt 22/10/2026) — kiểm theo cách AlignScore [AlignScore]: ngữ cảnh = chữ của các khoản chứa trích dẫn đã qua kiểm (a), cắt đoạn ~350 token; mỗi câu kết luận lấy xác suất `entailment` cao nhất trên các đoạn; điểm cả câu trả lời = trung bình. Bắt loại lỗi "suy luận sai" mà (a) không bắt được — ví dụ trích đúng nguyên văn định mức rượu của thuyền viên nhưng kết luận cho hành khách | Gắn cờ câu dưới ngưỡng ("câu chưa được căn cứ ủng hộ"), không xoá câu trả lời. Ngưỡng **tạm 0,5** — đặt lại trên tập kiểm định |
+| g | **Mỗi câu trong kết luận phải được căn cứ ủng hộ** (chốt 22/10/2026) — kiểm theo cách AlignScore [AlignScore]: ngữ cảnh = chữ của các khoản chứa trích dẫn đã qua kiểm (a), cắt đoạn ~350 token; mỗi câu kết luận lấy xác suất `entailment` cao nhất trên các đoạn; điểm cả câu trả lời = trung bình. Bắt loại lỗi "suy luận sai" mà (a) không bắt được — ví dụ trích đúng nguyên văn định mức rượu của thuyền viên nhưng kết luận cho hành khách | Gắn cờ câu dưới ngưỡng ("câu chưa được căn cứ ủng hộ"), không xoá câu trả lời. Ngưỡng **tạm 0,5** — đặt lại trên tập kiểm định. **Giới hạn chạy (23/10/2026):** câu trả lời nhiều ý (~20 câu, khoản dài) làm bước này chạy hơn 10 phút trên CPU → mỗi câu chỉ chấm với 3 đoạn ngữ cảnh có nhiều từ chung nhất (lệch khỏi AlignScore — AlignScore chấm mọi đoạn), và dừng sau 60 giây; câu chưa kịp chấm được đếm riêng (`claim_unscored`), không tính vào điểm. Guardrail không bao giờ làm hỏng câu trả lời |
 
 **Model cho guardrail g:** AlignScore chỉ có bản nền RoBERTa **tiếng Anh** (README: "we only provide the metric trained on RoBERTa") → dùng cùng cách làm với model NLI đa ngôn ngữ `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` [mDeBERTa-NLI] (MIT; nhãn theo thứ tự entailment / neutral / contradiction; độ chính xác XNLI tiếng Việt 0,793 theo model card; dữ liệu huấn luyện dịch máy, NLI tổng quát — trên văn bản luật tiếng Việt **chưa đo**). NLI là một trong 7 nhiệm vụ nền của AlignScore. Chạy trên **CPU** — không tranh VRAM với `llama-server`.
 

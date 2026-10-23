@@ -10,7 +10,12 @@ dependencies = [
 
 [project.optional-dependencies]
 # cần từ bước "Lấy văn bản luật về"
-ingest = ["httpx>=0.27", "lxml>=5.2", "pypdf>=5.0"]
+ingest = [
+    "httpx>=0.27",
+    "lxml>=5.2",
+    # File đính kèm (.doc/RTF/PDF) do Apache Tika 4.1.0 đọc — chương trình Java ngoài Python, đường dẫn trong .env
+    # (JAVA_EXE, TIKA_APP_JAR; docs/architecture.md, Đọc file đính kèm).
+]
 # điều phối pipeline dữ liệu (app/pipeline)
 pipeline = ["dagster>=1.13,<1.14", "dagster-webserver>=1.13,<1.14"]
 # luồng trả lời (app/answer). LangGraph ghim đúng phiên bản: thư viện đổi nhanh, checkpoint lưu dạng đóng gói.

@@ -6,6 +6,8 @@
 - **Không thêm thư viện** nếu vài dòng code làm được. Thêm thư viện phải được người dùng đồng ý (xem `ai-workflow-rules.md`).
 - **Không trừu tượng hóa trước.** Không interface cho một cách cài đặt, không cấu hình cho giá trị không bao giờ đổi, không khung sườn "để sau dùng".
 - **Sửa lỗi ở gốc.** Lỗi nằm trong hàm dùng chung thì sửa trong hàm đó, không vá ở từng chỗ gọi.
+- **Dữ liệu thật: bộ đo cố định** (`python -m app.ingest.check_golden_cases`, cũng chạy trong Dagster — bài kiểm `bo_do_co_dinh`). Sửa bộ tách, bộ đọc file, phép kiểm chất lượng → chạy lại cả bộ. Gặp lỗi dữ liệu mới → **thêm ca vào bộ đo trước** (ca phải trượt), rồi mới sửa code (ca đạt). Không sửa một ca bằng quy tắc chỉ khớp đúng văn bản đó: quy tắc phải nói được điều đúng với mọi văn bản (khuôn đề mục, thứ tự đánh số…), và phải so trước/sau trên toàn kho xem có văn bản đúng nào bị hỏng không.
+- **Kiểm bất biến, không nhận dạng từng lỗi:** phép kiểm mới thêm vào `check_document_quality.py` dưới dạng "văn bản đúng phải thoả điều này", kèm mức nặng (`cach_ly` / `canh_bao`).
 - **Mỗi logic không tầm thường có đúng một bài tự kiểm chạy được** — hàm `self_check()` dùng `assert`, gọi bằng `python -m app.<module> --check`, không gọi mạng. Không dùng framework test, không fixture.
 
 ## Đặt tên
@@ -58,7 +60,9 @@
 - **Mọi lời gọi model gửi rõ thông số lấy mẫu** — không dựa vào mặc định của server. Viết câu trả lời: `config.LLM_ANSWER_TEMPERATURE` (0.4) + `LLM_TOP_P`, `LLM_TOP_K`, `LLM_SEED`, `LLM_ANSWER_MAX_TOKENS`; phân loại: `config.LLM_CLASSIFY_TEMPERATURE` (0). Không bật phạt lặp (`presence_penalty`, `repeat_penalty`) — làm sai chữ trong đoạn trích. Lý do và nguồn: `danh-gia.md`.
 - **Async trên Windows:** psycopg async không chạy với `ProactorEventLoop` mặc định của Windows (tài liệu psycopg) → chạy bằng `asyncio.run(..., loop_factory=asyncio.SelectorEventLoop)`.
 - Gọi `llama-server` bằng `httpx.AsyncClient` (async, có timeout); usage của từng lời gọi giữ trong state, bước cuối mới ghi `usage_log`.
-- Chi tiết bổ sung khi bắt đầu bước Trả lời.
+- **uvicorn trên Windows tự chọn `ProactorEventLoop`** (mã nguồn uvicorn 0.54, `loops/asyncio.py`) → không chạy `uvicorn` bằng dòng lệnh; chạy `uvicorn.Server(config).serve()` trong `asyncio.run(..., loop_factory=SelectorEventLoop)` (`app/web/server.py`).
+- Mỗi lúc chỉ chạy một câu hỏi (khoá `asyncio.Lock`): `llama-server` chạy `-np 1`, checkpointer dùng một kết nối Postgres.
+- Template Jinja2 tự thoát HTML (`autoescape`) — chữ văn bản luật và câu hỏi không bao giờ được chèn bằng `|safe`.
 
 ## Tài liệu
 

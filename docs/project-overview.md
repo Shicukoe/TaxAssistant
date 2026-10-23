@@ -32,6 +32,7 @@ Chatbot tra cứu pháp luật thuế Việt Nam. Người dùng hỏi bằng ti
 6. Mọi trích dẫn trong câu trả lời được so với chữ đã lưu; trích dẫn không khớp bị bỏ.
 7. Mẹ đọc câu trả lời: từng bước lập luận, mỗi bước kèm căn cứ (tên văn bản, Điều/khoản/điểm, đoạn trích nguyên văn, link bản gốc) và nhãn bắt buộc.
 8. Mẹ xem lại các câu đã hỏi trong lịch sử.
+9. **Hoặc mẹ đọc thẳng** (chế độ Tra cứu, chốt 22/10/2026): duyệt văn bản theo thứ bậc (Luật → Nghị quyết → Nghị định → Thông tư; công văn để riêng), theo loại thuế, theo hiệu lực tại một ngày; mở một văn bản thấy mục lục Điều/khoản, nhãn hiệu lực, văn bản sửa đổi / hợp nhất liên quan, link tải bản gốc. Thấy sai thì bấm **báo sai** — văn bản vào danh sách chờ xem tay.
 
 ## Tính năng
 
@@ -67,7 +68,7 @@ Chatbot tra cứu pháp luật thuế Việt Nam. Người dùng hỏi bằng ti
 - Chỉ văn bản **trung ương** (chốt 02/10/2026).
 - Công văn của Cục Thuế trung ương (gdt.gov.vn), kể cả bản scan (chỉ để tìm).
 - **Công văn cũ bắt buộc phải tìm thấy được** (chốt 12/10/2026), kể cả khi văn bản nó hướng dẫn đã hết hiệu lực. Lý do: kỳ thuế cũ áp dụng văn bản có hiệu lực lúc đó, cơ quan thuế truy thu được tới 10 năm, và cần đặt công văn cũ cạnh quy định mới để so. Chi tiết ở `thu-bac-van-ban.md`.
-- Web app cho một người dùng, truy cập qua mạng riêng.
+- Web app cho một người dùng, truy cập trong mạng nhà hoặc qua mạng riêng, hai chế độ: Hỏi và Tra cứu (chốt 22/10/2026).
 
 ### Ngoài phạm vi
 

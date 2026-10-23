@@ -16,14 +16,17 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from app import config
 from app.answer.answer_graph import build_answer_graph
 from app.answer.check_claim_support import load_nli_model
+from app.answer.search_articles import provision_label
 
 # Ô nào in ra sau mỗi bước — đủ để thấy lỗi nằm ở bước nào (lấy sai thông tin / tìm sai / viết sai).
 DEBUG_FIELDS = {
     "understand_question": ["as_of_date", "as_of_source", "tax_types", "question_kind", "label_source", "search_text"],
+    "split_question": ["search_parts"],
     "search_articles": ["articles"],
+    "add_referenced_articles": ["articles"],
     "write_answer": ["draft"],
     "check_citations": ["citations", "unverified_numbers", "has_cause"],
-    "check_claim_support": ["claim_support", "support_score"],
+    "check_claim_support": ["claim_support", "support_score", "claim_unscored"],
     "save_answer": ["question_id"],
 }
 
@@ -34,7 +37,8 @@ def print_step(node: str, update: dict, elapsed_ms: int) -> None:
         value = update.get(field)
         if field == "articles":
             for article in value or []:
-                print(f"  │ {article['score']:>7}  {article['loai']} {article['so_hieu']} — Điều {article['dieu_so']}. "
+                label = provision_label(article["dieu_level"], article["dieu_so"])
+                print(f"  │ {article['score']:>7}  {article['loai']} {article['so_hieu']} — {label}. "
                       f"{(article['dieu_ten'] or '')[:60]}", flush=True)
             continue
         if field == "claim_support":
@@ -92,8 +96,8 @@ async def chat() -> None:
 
             started = time.perf_counter()
             last_update = None
-            async for chunk in graph.astream({"question": question, "thread_id": thread_id}, run_config,
-                                             stream_mode="updates", durability="async"):
+            async for chunk in graph.astream({"question": question, "thread_id": thread_id, "started_at": time.time()},
+                                             run_config, stream_mode="updates", durability="async"):
                 for node, update in chunk.items():
                     print_step(node, update or {}, round((time.perf_counter() - started) * 1000))
                     if "answer_text" in (update or {}):  # check_claim_support có thể thêm cảnh báo

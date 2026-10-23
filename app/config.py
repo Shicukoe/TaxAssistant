@@ -42,6 +42,22 @@ FETCH_USER_AGENT = os.getenv("FETCH_USER_AGENT", "Mozilla/5.0")
 FETCH_DELAY_SECONDS = float(os.getenv("FETCH_DELAY_SECONDS", "2"))
 # Quy tắc: luôn lưu bản gốc ra đĩa trước khi xử lý — nguồn chính có thể tắt bất cứ lúc nào.
 RAW_DATA_DIR = PROJECT_ROOT / os.getenv("RAW_DATA_DIR", "./data/raw")
+# XHTML Tika đọc từ file đính kèm (app/ingest/read_attachments.py) — tạo lại được từ bản gốc.
+CONVERTED_DATA_DIR = PROJECT_ROOT / os.getenv("CONVERTED_DATA_DIR", "./data/converted")
+# Apache Tika 4.1.0 cần Java 17 trở lên; cả hai để ở ổ D, ngoài repo (docs/architecture.md, Đọc file đính kèm).
+JAVA_EXE = Path(os.getenv("JAVA_EXE", "D:/tools/java/jdk-21.0.12.1+1-jre/bin/java.exe"))
+TIKA_APP_JAR = Path(os.getenv("TIKA_APP_JAR", "D:/tools/tika/tika-app-4.1.0.jar"))
+
+# --- Web app (app/web) — chỉ cổng này nghe 0.0.0.0 cho máy trong Wi-Fi nhà; model, Postgres, Dagster giữ 127.0.0.1 ---
+WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
+WEB_PORT = int(os.getenv("WEB_PORT", "8000"))
+
+# --- Embedding (tìm theo nghĩa) — BGE-M3 qua llama-server thứ hai: bash scripts/run_embedding_server.sh ---
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://127.0.0.1:9932/v1")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
+# Đổi file GGUF / cách gắn ngữ cảnh → đổi phiên bản này để tính lại mọi vector.
+EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "f16-b11796-ctx1")
+EMBEDDING_DIM = 1024
 
 # --- Model tự host trên laptop (xem docs/architecture.md, mục Model AI) ---
 # llama-server nói API kiểu OpenAI; đổi sang vLLM/SGLang trên VPS chỉ đổi địa chỉ này.

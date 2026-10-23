@@ -13,6 +13,8 @@ from app.answer.call_local_model import ask_local_model_for_json
 
 TAX_TYPES = ["GTGT", "TNDN", "TNCN", "ho_kinh_doanh", "hoa_don", "quan_ly_thue_xu_phat", "xuat_nhap_khau", "khac"]
 QUESTION_KINDS = ["tra_cuu", "vi_pham", "so_sanh_thoi_gian", "ngoai_pham_vi"]
+# Hai loại nhận bằng quy tắc, rẽ nhánh riêng trong answer_graph (docs/architecture.md, Model AI) — model không gán.
+SMALL_TALK, CONCEPT = "chao_hoi", "khai_niem"
 
 # Từ khoá viết không dấu, khớp trên câu hỏi đã bỏ dấu.
 TAX_TYPE_KEYWORDS = {
@@ -26,6 +28,34 @@ TAX_TYPE_KEYWORDS = {
 }
 VIOLATION_KEYWORDS = ["xu phat", "bi phat", "phat ", "vi pham", "cham nop", "nop cham", "khai cham"]
 COMPARISON_KEYWORDS = ["so sanh", "khac nhau", "truoc va sau", "thay doi"]
+
+# Câu chào / không phải câu hỏi (đã bỏ dấu): "xin chào", "hello", "cảm ơn", "ok".
+SMALL_TALK_PATTERN = re.compile(
+    r"^(?:(?:xin )?chao(?: ban| em| anh| chi| co| bot| tro ly)?|hi|hello|hey|alo|hel+o+l*|test|thu|cam on(?: ban| nhe)?"
+    r"|thanks?|thank you|ok|oke|okay|vang|da)[\s.!?,]*$"
+)
+# Câu hỏi khái niệm (đã bỏ dấu): "thuế là gì", "khái niệm hóa đơn", "thế nào là hộ kinh doanh".
+CONCEPT_PATTERNS = [
+    re.compile(r"^(?:cho (?:toi|minh|em) hoi )?(?:khai niem|dinh nghia)(?: ve| cua)? (?P<term>.+?)[\s.!?]*$"),
+    re.compile(r"^(?:cho (?:toi|minh|em) hoi )?the nao (?:la|duoc goi la) (?P<term>.+?)[\s.!?]*$"),
+    re.compile(r"^(?:cho (?:toi|minh|em) hoi )?(?P<term>.+?) (?:la gi|la cai gi|nghia la gi|co nghia la gi"
+               r"|duoc hieu (?:la gi|nhu the nao)|duoc dinh nghia (?:la gi|nhu the nao))[\s.!?]*$"),
+]
+MAX_CONCEPT_WORDS = 8  # dài hơn thì là câu hỏi tình huống, không phải hỏi khái niệm
+
+
+def detect_simple_question(question: str) -> tuple[str | None, str | None]:
+    """(loại, thuật ngữ đã bỏ dấu): chào hỏi → (SMALL_TALK, None); khái niệm → (CONCEPT, 'thue'); khác → (None, None)."""
+    plain = " ".join(remove_diacritics(question).split())
+    if not re.search(r"[a-z]", plain) or SMALL_TALK_PATTERN.match(plain):
+        return SMALL_TALK, None
+    for pattern in CONCEPT_PATTERNS:
+        if (m := pattern.match(plain)) and len(m["term"].split()) <= MAX_CONCEPT_WORDS:
+            term = " ".join(re.sub(r"[^a-z0-9 ]", " ", m["term"]).split())
+            if term:
+                return CONCEPT, term
+    return None, None
+
 
 CLASSIFY_SCHEMA = {
     "type": "object",
@@ -92,6 +122,16 @@ async def understand_question(state: dict) -> dict:
     previous_question = state.get("search_text") or ""
 
     as_of, as_of_source = find_as_of_date(question, today)
+    simple_kind, concept_term = detect_simple_question(question)
+    if simple_kind:  # chào hỏi / khái niệm: không mang ô từ lượt trước, không gọi model
+        return {
+            "as_of_date": (as_of or today).isoformat(),
+            "as_of_source": as_of_source if as_of else "mac_dinh_hom_nay",
+            "tax_types": [], "question_kind": simple_kind, "concept_term": concept_term,
+            "label_source": "quy_tac", "search_text": question, "understand_usage": [],
+            # đặt lại mỗi lượt: khái niệm không thấy định nghĩa → tìm thường, không qua split_question
+            "search_parts": [question], "split_usage": [],
+        }
     tax_types, kind = match_keywords(question)
     usage = []
 
@@ -125,7 +165,9 @@ async def understand_question(state: dict) -> dict:
         "as_of_source": as_of_source,
         "tax_types": tax_types,
         "question_kind": kind,
+        "concept_term": None,
         "label_source": label_source,
         "search_text": search_text,
+        "search_parts": [search_text],  # split_question ghi đè nếu tách
         "understand_usage": usage,
     }

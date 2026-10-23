@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Hiệu năng — Tax Assistant{% endblock %}
+{% block content %}
+<div class="page">
+<h1 class="page-title">Hiệu năng</h1>
+<div class="stats">
+  <div class="stat"><span class="stat-value">{{ p.so_cau.tong }}</span><span class="stat-name">câu đã hỏi</span></div>
+  <div class="stat"><span class="stat-value">{{ p.so_cau.hom_nay }}</span><span class="stat-name">hôm nay</span></div>
+  <div class="stat"><span class="stat-value">{{ p.so_cau.bay_ngay }}</span><span class="stat-name">7 ngày qua</span></div>
+  <div class="stat">
+    {% if p.gpu %}
+    <span class="stat-value">{{ '%.1f'|format(p.gpu.dung_mb / 1024) }} / {{ '%.1f'|format(p.gpu.tong_mb / 1024) }} GB</span>
+    <span class="stat-name">bộ nhớ GPU đang dùng</span>
+    {% else %}<span class="stat-value">—</span><span class="stat-name">không đọc được bộ nhớ GPU</span>{% endif %}
+  </div>
+</div>
+
+<h2>Thời gian trả lời</h2>
+<p class="muted">Từ lúc nhận câu hỏi tới lúc lưu câu trả lời, gồm tìm kiếm và các bước kiểm. Câu hỏi trước 23/10/2026 không có số này.</p>
+{% if p.thoi_gian %}
+<div class="table-wrap">
+<table class="data">
+  <thead><tr><th>Loại câu hỏi</th><th>Số câu</th><th>Thường mất</th><th>Chậm nhất 10%</th></tr></thead>
+  <tbody>
+  {% for t in p.thoi_gian %}
+    <tr><td>{{ t.nhanh }}</td><td>{{ t.so_cau }}</td><td>{{ '%.1f'|format(t.trung_vi) }} giây</td>
+        <td>{{ '%.1f'|format(t.cham_nhat_10) }} giây</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}<p>Chưa có câu trả lời nào được đo thời gian.</p>{% endif %}
+
+<h2>Model viết câu trả lời</h2>
+{% if p.toc_do %}
+<p>Đọc ngữ cảnh khoảng <strong>{{ p.toc_do.doc }}</strong> token/giây · viết khoảng <strong>{{ p.toc_do.sinh }}</strong>
+  token/giây <span class="muted">(trung bình từ lúc bật model)</span></p>
+{% else %}<p>Không đọc được — model trên laptop có thể đang tắt.</p>{% endif %}
+
+<h2>20 câu gần nhất</h2>
+<div class="table-wrap">
+<table class="data">
+  <thead><tr><th>Lúc hỏi</th><th>Câu hỏi</th><th class="wide-only">Loại</th><th>Tổng</th><th class="wide-only">Model</th></tr></thead>
+  <tbody>
+  {% for r in p.gan_day %}
+    <tr>
+      <td class="nowrap">{{ r.asked_at.strftime('%d/%m %H:%M') }}</td>
+      <td>{{ r.text|truncate(90) }}{% if r.has_cause == false and r.nhanh != 'Chào hỏi' %} <span class="label label-check">không có căn cứ</span>{% endif %}</td>
+      <td class="nowrap wide-only">{{ r.nhanh }}</td>
+      <td class="nowrap">{{ '%.1f'|format(r.giay) ~ ' giây' if r.giay is not none else '—' }}</td>
+      <td class="nowrap wide-only">{{ '%.1f'|format(r.giay_model) ~ ' giây' if r.giay_model is not none else '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% endblock %}

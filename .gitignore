@@ -5,6 +5,7 @@ __pycache__/
 venv/
 data/raw/
 data/ocr/
+data/converted/
 *.log
 *.egg-info/
 dagster_home/*
