@@ -1,4 +1,4 @@
-/* Bố cục như ChatGPT, xanh dương chủ đạo, sáng / tối (synthwave) — docs/ui-context.md (chốt 23/10/2026).
+/* Bố cục như ChatGPT, xanh dương chủ đạo, sáng / tối (synthwave) — docs/ui-context.md.
    Mọi màu là biến: chế độ sáng trên :root, chế độ tối ghi đè trong [data-theme="dark"]; thành phần chỉ dùng biến. */
 :root {
   color-scheme: light;
@@ -216,6 +216,11 @@ body.sidebar-collapsed .open-sidebar, body.sidebar-collapsed .topbar-new { displ
 .chip { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: 14px; font-weight: 600;
         background: var(--accent-soft); color: var(--chip-text); }
 .conclusion { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* kết luận đang chạy ra: nhãn "chưa kiểm căn cứ" + con trỏ nhấp nháy; bị thay bằng bản đã kiểm khi xong */
+.draft .label { margin: 0 0 6px; }
+.conclusion.drafting::after { content: "▍"; margin-left: 1px; color: var(--accent-primary); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .conclusion.drafting::after { animation: none; } }
 .callout { margin: 0 0 8px; padding: 8px 12px; border-radius: var(--radius-small); font-weight: 600; }
 .callout-no-basis { background: var(--callout-no-basis-bg); color: var(--label-no-basis); }
 .callout-warning { background: var(--callout-warning-bg); color: var(--label-check); }

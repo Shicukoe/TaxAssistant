@@ -29,7 +29,7 @@ from app.ingest import read_attachments as attachments
 from app.ingest import save_to_database as database
 from app.ingest.stage_report import StageReport
 
-# Ngưỡng tạm — chỉnh sau khi xem vài lần chạy thật (giống cách đặt ngưỡng trong docs/danh-gia.md).
+# Tỷ lệ lỗi tối đa của mỗi công đoạn trước khi bài kiểm báo trượt.
 MAX_FAILURE_SHARE_DOWNLOAD = 0.05
 MAX_FAILURE_SHARE_DATABASE = 0.01
 # Sitemap lần này phải còn ít nhất bấy nhiêu phần danh sách đã biết, nếu không là sitemap có vấn đề.

@@ -56,7 +56,7 @@ TCVN3_CODES = {
 TCVN3_TO_UNICODE = str.maketrans({chr(code): char for code, char in TCVN3_CODES.items()})
 # Ký tự chỉ gặp khi chữ là mã TCVN3 đọc nhầm thành Latin-1 ("Bé tµi chÝnh"): mã TCVN3 trừ chữ Việt
 # Latin-1 (à, é, ô…) và trừ ký hiệu có thể có thật trong văn bản Unicode (§ ­ « » ® ·, dấu nhân/chia trong
-# công thức "37,702 triệu đồng × 25%" — gặp thật 22/10/2026).
+# công thức như "37,702 triệu đồng × 25%").
 TCVN3_SIGNATURE = (
     {chr(code) for code in TCVN3_CODES}
     - set("ÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚÝàáâãèéêìíòóôõùúý")
@@ -72,7 +72,7 @@ def has_vietnamese_unicode(text: str) -> bool:
 
 def fix_tcvn3_line(text: str) -> str:
     """Dòng còn mã TCVN3 (có ký tự đặc trưng, không có chữ Việt Unicode) → Unicode. Dòng khác giữ nguyên."""
-    # "µ" sau chữ số là đơn vị micro ("100±5µm", gặp thật 22/10/2026), không phải "à" của TCVN3.
+    # "µ" sau chữ số là đơn vị micro ("100±5µm"), không phải "à" của TCVN3.
     signature_text = MICRO_UNIT.sub("", text)
     if has_vietnamese_unicode(text) or not any(c in TCVN3_SIGNATURE for c in signature_text):
         return text
@@ -132,7 +132,7 @@ def read_attachment_lines(attachment: Attachment) -> list[TextLine]:
     if attachment.text_origin != "native":
         return lines  # PDF: "�" là glyph không đọc được — giữ lại để phép kiểm ma_chu bắt
     # Word: Tika (Apache POI) ghi chú thích SAU HẾT phần thân, mỗi đoạn chú thích mở đầu bằng dấu tham chiếu "�"
-    # (đo 22/10/2026 trên văn bản hợp nhất 10–14/VBHN-BTC). Vùng chú thích trích Điều của văn bản khác
+    # (ví dụ các văn bản hợp nhất 10–14/VBHN-BTC). Vùng chú thích trích Điều của văn bản khác
     # ("“Điều 6. Hiệu lực thi hành…") → không thuộc Điều nào, bỏ khỏi chữ đem tách.
     footnotes_start = next((i for i, line in enumerate(lines) if line.text.startswith("�")), len(lines))
     # "�" còn lại giữa dòng là ký tự điều khiển Word (xuống dòng trong khung: "Mẫu số: 08/TNDN�(Ban hành") — không mất chữ.

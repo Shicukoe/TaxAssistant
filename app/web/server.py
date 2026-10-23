@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).parent
 THREAD_COOKIE = "hoi_thoai"
 MAX_QUESTION_CHARS = 2000
-STEP_NAMES = {  # chữ hiện cho mẹ trong lúc chờ
+STEP_NAMES = {  # tên bước hiện cho người dùng trong lúc chờ
     "understand_question": "Đọc câu hỏi, lấy mốc thời gian",
     "reply_small_talk": "Trả lời lời chào",
     "look_up_definition": "Tra định nghĩa trong Điều \"Giải thích từ ngữ\"",
@@ -176,7 +176,7 @@ async def new_conversation():
 
 def citation_view(citation: dict) -> dict:
     """Một căn cứ để hiện: trích dẫn đã kiểm (có link tới đúng Điều) hoặc căn cứ chỉ có số hiệu + link."""
-    # Câu trả lời lưu trước khi căn cứ có document_id (22/10/2026) không có link tới trang văn bản
+    # Căn cứ lưu theo định dạng cũ (không có document_id) thì không có link tới trang văn bản
     document_id, chunk_id = citation.get("document_id"), citation.get("chunk_id")
     link = (f"/van-ban/{document_id}#d-{chunk_id}" if chunk_id else f"/van-ban/{document_id}") if document_id else None
     return {"trang_thai": citation["trang_thai"], "vi_tri": citation.get("vi_tri"), "loai": citation.get("loai"),
@@ -247,12 +247,19 @@ async def ask(request: Request):
         if lock.locked():
             yield line({"buoc": "cho", "ten": "Đang trả lời câu hỏi khác, chờ một chút…"})
         async with lock:
-            state, started = {}, time.perf_counter()
+            state, started, written = {}, time.perf_counter(), ""
             run_config = {"configurable": {"thread_id": thread_id}}
             try:
-                async for chunk in request.app.state.graph.astream(
+                # "updates": xong từng bước; "custom": kết luận đang viết (write_answer) — chỉ gửi phần chữ mới thêm
+                async for mode, chunk in request.app.state.graph.astream(
                         {"question": question, "thread_id": thread_id, "started_at": time.time()}, run_config,
-                        stream_mode="updates", durability="async"):
+                        stream_mode=["updates", "custom"], durability="async"):
+                    if mode == "custom":
+                        text = chunk.get("dang_viet", "")
+                        yield line({"viet_them": text[len(written):]} if text.startswith(written)
+                                   else {"dang_viet": text})
+                        written = text
+                        continue
                     for node, update in chunk.items():
                         state.update(update or {})
                         event = {"buoc": node, "ten": STEP_NAMES.get(node, node),

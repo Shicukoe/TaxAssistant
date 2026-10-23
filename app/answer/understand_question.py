@@ -1,7 +1,7 @@
 """Hiểu câu hỏi: mốc thời gian (quy tắc), loại thuế và loại câu hỏi (quy tắc từ khoá, model chỉ khi quy tắc không ra).
 
-Quy tắc bất biến số 12: thông tin quyết định đúng sai lấy tất định khi làm được. Model (Qwen, T=0) đo 22/10/2026
-ổn định nhưng sai có hệ thống (câu nào cũng ra TNCN/TNDN) → chỉ dùng khi không từ khoá nào khớp.
+Quy tắc bất biến số 12: thông tin quyết định đúng sai lấy tất định khi làm được. Model (Qwen, T=0) ổn định nhưng
+sai có hệ thống (nghiêng về TNCN/TNDN) → chỉ dùng khi không từ khoá nào khớp.
 """
 
 import re

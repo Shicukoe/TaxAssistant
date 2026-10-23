@@ -35,7 +35,7 @@ RECENT_SQL = f"""
     limit 20"""
 # Tốc độ = tổng token ÷ tổng giây, từ các bộ đếm cộng dồn (TYPE counter) kể từ lúc llama-server khởi động. Không dùng
 # gauge "llamacpp:prompt_tokens_seconds" (Average … throughput): số này chỉ tính từ lần đọc /metrics trước — đọc hai lần
-# liền nhau ra 0 (gặp 23/10/2026).
+# liền nhau ra 0.
 SPEED_COUNTERS = {"doc": ("llamacpp:prompt_tokens_total", "llamacpp:prompt_seconds_total"),
                   "sinh": ("llamacpp:tokens_predicted_total", "llamacpp:tokens_predicted_seconds_total")}
 

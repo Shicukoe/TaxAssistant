@@ -7,6 +7,7 @@ node không ghi database giữa chừng (docs/code-standards.md).
 
 import json
 import time
+from collections.abc import Callable
 
 import httpx
 
@@ -25,19 +26,7 @@ async def ask_local_model(
     json_schema: dict | None = None,
 ) -> tuple[str, dict]:
     """Gọi llama-server một lần. Luôn gửi rõ thông số lấy mẫu, không dựa vào mặc định của server."""
-    body = {
-        "model": config.LLM_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        "top_p": config.LLM_TOP_P,
-        "top_k": config.LLM_TOP_K,
-        "seed": config.LLM_SEED,
-        "presence_penalty": 0,
-        "max_tokens": max_tokens,
-    }
-    if json_schema is not None:
-        # Ép đầu ra theo schema (grammar của llama.cpp) — README tools/server, mục response_format.
-        body["response_format"] = {"type": "json_object", "schema": json_schema}
+    body = request_body(messages, temperature, max_tokens, json_schema)
 
     started = time.perf_counter()
     async with httpx.AsyncClient(base_url=config.LLM_BASE_URL, timeout=config.LLM_TIMEOUT_SECONDS) as client:
@@ -56,6 +45,56 @@ async def ask_local_model(
         "duration_ms": duration_ms,
     }
     return choice["message"]["content"], usage
+
+
+def request_body(messages: list[dict], temperature: float, max_tokens: int, json_schema: dict | None) -> dict:
+    body = {
+        "model": config.LLM_MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "top_p": config.LLM_TOP_P,
+        "top_k": config.LLM_TOP_K,
+        "seed": config.LLM_SEED,
+        "presence_penalty": 0,
+        "max_tokens": max_tokens,
+    }
+    if json_schema is not None:
+        # Ép đầu ra theo schema (grammar của llama.cpp) — README tools/server, mục response_format.
+        body["response_format"] = {"type": "json_object", "schema": json_schema}
+    return body
+
+
+async def stream_local_model_json(messages: list[dict], json_schema: dict, *, temperature: float, max_tokens: int,
+                                  on_text: Callable[[str], None]) -> tuple[dict, dict]:
+    """Như ask_local_model_for_json nhưng nhận chữ dần (server-sent events) — on_text(chữ đã nhận tới lúc này) sau mỗi
+    mẩu, để hiện câu trả lời đang viết. Định dạng của llama-server b11796: mỗi dòng "data: {…}" có
+    choices[0].delta.content; finish_reason ở mẩu cuối có choices; stream_options.include_usage → thêm một mẩu "usage";
+    kết thúc bằng "data: [DONE]". Stream chạy được cùng response_format có schema."""
+    body = {**request_body(messages, temperature, max_tokens, json_schema),
+            "stream": True, "stream_options": {"include_usage": True}}
+    pieces, usage, finish_reason = [], None, None
+    started = time.perf_counter()
+    async with httpx.AsyncClient(base_url=config.LLM_BASE_URL, timeout=config.LLM_TIMEOUT_SECONDS) as client:
+        async with client.stream("POST", "/chat/completions", json=body) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                chunk = json.loads(line.removeprefix("data: "))
+                usage = chunk.get("usage") or usage
+                for choice in chunk.get("choices", []):
+                    finish_reason = choice.get("finish_reason") or finish_reason
+                    if piece := (choice.get("delta") or {}).get("content"):
+                        pieces.append(piece)
+                        on_text("".join(pieces))
+    if finish_reason == "length":
+        raise ModelOutputCutError(f"model chạm max_tokens={max_tokens}")
+    return json.loads("".join(pieces)), {
+        "model": config.LLM_MODEL,
+        "input_tokens": (usage or {}).get("prompt_tokens", 0),
+        "output_tokens": (usage or {}).get("completion_tokens", 0),
+        "duration_ms": round((time.perf_counter() - started) * 1000),
+    }
 
 
 async def ask_local_model_for_json(messages: list[dict], json_schema: dict, *, temperature: float,

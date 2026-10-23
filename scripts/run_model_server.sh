@@ -10,7 +10,7 @@ set -euo pipefail
 llama_server="${LLAMA_SERVER_EXE:-D:/models/llama.cpp/b11796/bin/llama-server.exe}"
 model_file="${MODEL_FILE:-D:/models/qwen3.5-4b/Qwen3.5-4B-Q4_K_M.gguf}"
 
-# -ngl all       đưa mọi lớp lên GPU (~3 GB VRAM với Qwen3.5-4B Q4_K_M, đo 22/10/2026)
+# -ngl all       đưa mọi lớp lên GPU (~3 GB VRAM với Qwen3.5-4B Q4_K_M)
 # -c 16384       độ dài context; tăng thì KV cache tốn thêm VRAM
 # -fa on         flash attention; -ctk/-ctv q8_0 lượng tử KV cache cho đỡ VRAM
 # -np 1          một slot: một người hỏi một lúc
@@ -27,7 +27,7 @@ model_file="${MODEL_FILE:-D:/models/qwen3.5-4b/Qwen3.5-4B-Q4_K_M.gguf}"
 #                Mặc định của llama-server là 0.8.
 # --top-p 0.8 --top-k 20 --min-p 0
 #                theo model card Qwen3.5, chế độ không suy luận.
-# --seed 42      cố định → cùng câu hỏi ra cùng câu trả lời (đo 22/10: 3 lần giống hệt), để debug.
+# --seed 42      cố định → cùng câu hỏi ra cùng câu trả lời, để debug.
 # --repeat-penalty 1.0 / --presence-penalty 0
 #                tắt phạt lặp: trích nguyên văn luật phải lặp đúng chữ, phạt lặp làm model đổi chữ → trượt kiểm trích dẫn.
 exec "$llama_server" \

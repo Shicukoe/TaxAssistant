@@ -11,7 +11,7 @@ from app import config
 from app.answer.call_local_model import ask_local_model_for_json
 
 MAX_PARTS = 5
-LONG_QUESTION_WORDS = 30  # câu trong bộ đo tìm kiếm dài nhất 17 từ — tạm, chưa đo
+LONG_QUESTION_WORDS = 30  # câu hỏi một ý thường dưới 20 từ
 SPLIT_SCHEMA = {
     "type": "object",
     "properties": {

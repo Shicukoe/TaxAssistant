@@ -25,6 +25,7 @@
 - Mọi cấu hình lấy từ `app/config.py`. Không gọi `os.getenv` ở chỗ khác. Biến bắt buộc dùng `config.require_env(...)` để báo lỗi kèm cách sửa.
 - Dòng tối đa 100 ký tự (`[tool.ruff]` trong `pyproject.toml`).
 - Chú thích và docstring viết **tiếng Việt**, giải thích *vì sao*, không lặp lại code. Module mở đầu bằng docstring nói nó làm gì và cách chạy.
+- Chú thích mô tả **cách hoạt động và lý do kỹ thuật**, khách quan — không ghi nhật ký: không ngày tháng, không "người dùng chốt", không "gặp lỗi khi…", không "tạm, chưa đo" (việc còn mở ghi ở `progress-tracker.md`). Số đo làm căn cứ cho một lựa chọn thì ghi ngắn kèm nơi có chi tiết (`docs/danh-gia.md`). Lịch sử thay đổi nằm ở `progress-tracker.md` và git.
 - Chạy trên Windows console: đặt `PYTHONIOENCODING=utf-8` khi in tiếng Việt.
 
 ## Database

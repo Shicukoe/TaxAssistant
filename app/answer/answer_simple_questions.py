@@ -34,7 +34,7 @@ DEFINITION_SQL = f"""
     join documents d on d.id = k.document_id
     where k.level in ('khoan', 'diem')
       -- Điều "Giải thích từ ngữ", hoặc Điều mang đúng tên khái niệm: Luật Quản lý thuế 108/2025 đặt
-      -- "Điều … Hóa đơn điện tử", khoản 1 "Hóa đơn điện tử là …" (gặp 23/10/2026)
+      -- "Điều … Hóa đơn điện tử", khoản 1 "Hóa đơn điện tử là …"
       and (lower(f_unaccent(a.ten)) like 'giai thich tu ngu%%' or lower(f_unaccent(a.ten)) = %(term)s)
       and lower(f_unaccent(k.text)) ~ %(pattern)s
       and d.text_origin = 'native'

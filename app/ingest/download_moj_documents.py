@@ -53,7 +53,7 @@ MISSING_ATTACHMENTS_FILE = ATTACHMENTS_DIR / "missing.txt"
 # Hiệu lực trên cổng: hết hiệu lực / tạm ngưng — không tải lại, không đi tìm ở nguồn khác.
 EXPIRED_STATUS_CODES = {"HHL", "TNHL"}
 
-# Bấy nhiêu lỗi liên tiếp thì coi như cổng sập hoặc đang chặn mình → dừng công đoạn.
+# Bấy nhiêu lỗi liên tiếp thì coi như cổng sập hoặc đang chặn truy cập → dừng công đoạn.
 MAX_CONSECUTIVE_FAILURES = 10
 # Lỗi mạng tạm thời: thử lại sau 5 giây rồi 15 giây. Lỗi 4xx (trừ 429) là lỗi thật, không thử lại.
 RETRY_WAIT_SECONDS = (5, 15)
@@ -67,7 +67,7 @@ TAX_WORDS_IN_TITLE = re.compile(r"thuế|hóa đơn|hoá đơn", re.IGNORECASE)
 VALID_DOCUMENT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+")
 SITEMAP_XML_NAMESPACE = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 # Những trường mà đổi thì coi là văn bản đã bị sửa. Các trường như reviewStatus đổi liên tục
-# mà không đổi nội dung (đo 15/10/2026) nên không tính.
+# mà không đổi nội dung nên không tính.
 SIGNIFICANT_FIELDS = (
     "title", "docNum", "docType", "issueDate", "effFrom", "effTo", "effStatus",
     "documentFields", "documentContent", "documentContentFileName", "documentContentFileDocName",

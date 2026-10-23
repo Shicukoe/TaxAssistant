@@ -2,19 +2,28 @@
 
 Căn cứ trỏ tới số thứ tự đoạn [1], [2]… thay vì tự ghi số hiệu văn bản — model không bịa được số hiệu.
 Không tìm được Điều nào → không gọi model, trả "không có căn cứ" (guardrail d, docs/danh-gia.md).
+
+Kết luận chạy ra từng chữ (docs/architecture.md, Model AI): đọc dần chuỗi JSON model đang viết, lấy phần kết luận (hoặc
+từng ý) và đẩy ra bằng get_stream_writer của LangGraph — giao diện ghi rõ "chưa kiểm căn cứ" cho tới khi kiểm xong.
+
+Chạy bài tự kiểm: python -m app.answer.write_answer
 """
 
+import re
+
+from langgraph.config import get_stream_writer
+
 from app import config
-from app.answer.call_local_model import ask_local_model_for_json
+from app.answer.call_local_model import stream_local_model_json
 from app.answer.search_articles import expiry_note, load_chunk_texts, provision_label
 
 MAX_CHARS_PER_ARTICLE = 6000  # Điều dài nhất 473.833 ký tự — cắt để vừa context 16K token
 MAX_REFERENCED_CHARS = 3000  # Điều được dẫn chiếu: chỉ để model thấy nửa còn lại của quy định
 # Tổng chữ luật đưa model (4 × 6.000 + 2 × 3.000 như trước) — câu nhiều ý có tới 8 Điều thì mỗi Điều được ít chữ hơn
 CONTEXT_CHAR_BUDGET = 30000
-# Model từng chép cả khoản dài hàng nghìn ký tự vào một trích dẫn và chạm max_tokens (câu nhiều ý, 23/10/2026) —
-# schema chặn cứng (grammar của llama.cpp), prompt dặn chép câu ngắn nhất đủ làm căn cứ
-MAX_QUOTE_CHARS = 400  # 600 vẫn bị chép nhảy cóc giữa khoản
+# Giới hạn độ dài trích dẫn: không giới hạn thì model chép cả khoản dài và chạm max_tokens; trích dài cũng hay bị
+# chép nhảy cóc giữa khoản (trượt kiểm khớp nguyên văn). Schema chặn cứng (grammar của llama.cpp).
+MAX_QUOTE_CHARS = 400
 
 ANSWER_SCHEMA = {
     "type": "object",
@@ -53,8 +62,8 @@ SYSTEM_PROMPT = (
 
 
 def answer_schema(part_count: int) -> dict:
-    """Câu nhiều ý (split_question): schema buộc đúng một câu trả lời cho mỗi ý — model 4B được dặn bằng lời thì vẫn
-    chỉ viết một câu chung chung (đo 23/10/2026)."""
+    """Câu nhiều ý (split_question): schema buộc đúng một câu trả lời cho mỗi ý — chỉ dặn bằng lời thì model 4B
+    thường gộp thành một câu chung chung."""
     if part_count <= 1:
         return ANSWER_SCHEMA
     each_part = {"type": "array", "minItems": part_count, "maxItems": part_count,
@@ -103,13 +112,88 @@ async def write_answer(state: dict) -> dict:
     if len(parts) > 1:
         question += "\n\nCác ý cần trả lời, theo đúng thứ tự trong tung_y:\n" + "\n".join(
             f"{number}. {part}" for number, part in enumerate(parts, start=1))
-    draft, usage = await ask_local_model_for_json(
+    write = stream_writer()
+    shown = ""
+
+    def show_progress(raw: str) -> None:
+        nonlocal shown
+        text = live_conclusion(raw, parts)
+        if text != shown:
+            shown = text
+            write({"dang_viet": text})
+
+    draft, usage = await stream_local_model_json(
         [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}],
         # câu nhiều ý trả lời dài hơn; giới hạn vẫn chặn lặp vô tận
         answer_schema(len(parts)), temperature=config.LLM_ANSWER_TEMPERATURE,
-        max_tokens=config.LLM_ANSWER_MAX_TOKENS * (2 if len(parts) > 1 else 1),
+        max_tokens=config.LLM_ANSWER_MAX_TOKENS * (2 if len(parts) > 1 else 1), on_text=show_progress,
     )
     if "tung_y" in draft:  # ghép thành một kết luận — các bước kiểm và giao diện chỉ đọc ket_luan
-        draft["ket_luan"] = "\n\n".join(
-            f"{number}. {part}: {item['tra_loi']}" for number, (part, item) in enumerate(zip(parts, draft["tung_y"]), 1))
+        draft["ket_luan"] = join_parts(parts, [item["tra_loi"] for item in draft["tung_y"]])
     return {"draft": draft, "write_usage": [{**usage, "step": "write_answer"}]}
+
+
+def join_parts(parts: list[str], answers: list[str]) -> str:
+    """Câu nhiều ý: "1. <ý>: <trả lời>" — cùng một cách ghép cho bản đang viết và bản cuối."""
+    return "\n\n".join(f"{number}. {part}: {answer}" for number, (part, answer) in enumerate(zip(parts, answers), 1))
+
+
+def partial_json_strings(raw: str, key: str) -> list[str]:
+    """Giá trị (có thể còn dở) của mọi chuỗi "key": "…" trong JSON đang viết. Dừng ở dấu " đóng hoặc ở cuối chữ;
+    bỏ escape còn dở ở cuối. \\u của nửa cặp surrogate bị bỏ — không mã hoá được ra UTF-8."""
+    values = []
+    for match in re.finditer(rf'"{key}"\s*:\s*"', raw):
+        position, chars = match.end(), []
+        while position < len(raw) and raw[position] != '"':
+            char = raw[position]
+            if char != "\\":
+                chars.append(char)
+                position += 1
+                continue
+            if position + 1 >= len(raw):
+                break
+            escaped = raw[position + 1]
+            if escaped == "u":
+                if position + 6 > len(raw):
+                    break
+                code = int(raw[position + 2:position + 6], 16)
+                if not 0xD800 <= code <= 0xDFFF:
+                    chars.append(chr(code))
+                position += 6
+                continue
+            chars.append({"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}.get(escaped, escaped))
+            position += 2
+        values.append("".join(chars))
+    return values
+
+
+def live_conclusion(raw: str, parts: list[str]) -> str:
+    """Kết luận đang viết từ JSON dở: ket_luan, hoặc các tra_loi của câu nhiều ý."""
+    if len(parts) > 1:
+        answers = partial_json_strings(raw, "tra_loi")
+        return join_parts(parts, answers) if answers else ""
+    return next(iter(partial_json_strings(raw, "ket_luan")), "")
+
+
+def stream_writer():
+    """Gửi bản đang viết ra stream_mode="custom" của LangGraph; gọi node ngoài đồ thị (bài đo, script) → bỏ qua."""
+    try:
+        return get_stream_writer()
+    except RuntimeError:
+        return lambda _: None
+
+
+def self_check() -> None:
+    raw = '{\n  "co_can_cu": true,\n  "ket_luan": "Phạt từ 8.000.000 \\"đồng\\"\\nđến 15'
+    assert live_conclusion(raw, []) == 'Phạt từ 8.000.000 "đồng"\nđến 15', live_conclusion(raw, [])
+    assert live_conclusion(raw + "\\", []) == 'Phạt từ 8.000.000 "đồng"\nđến 15', "escape dở ở cuối bị bỏ"
+    assert live_conclusion('{"ket_luan": "Thu\\u1ebf', []) == "Thuế"
+    assert live_conclusion('{"co_can_cu": tr', []) == ""
+    raw = '{"co_can_cu": true, "tung_y": [{"tra_loi": "Được trừ."}, {"tra_loi": "Phạt 2'
+    assert live_conclusion(raw, ["Chi phí", "Xử phạt"]) == "1. Chi phí: Được trừ.\n\n2. Xử phạt: Phạt 2"
+    assert join_parts(["A"], ["x"]) == "1. A: x"
+    print("PASS")
+
+
+if __name__ == "__main__":
+    self_check()

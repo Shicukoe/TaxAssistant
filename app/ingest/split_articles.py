@@ -94,7 +94,7 @@ def html_to_text_lines(html: str, skipped_div_classes: tuple[str, ...] = ()) -> 
 # ---------------------------------------------------------------- các dòng → Điều
 
 # Đề mục Điều: "Điều 5." / "Điều 5:" / "Điều 5 Tên viết hoa" / "Điều 5" đứng một mình. Câu dẫn chiếu đầu dòng
-# "Điều 179 của Luật Thi hành án…" (chú thích văn bản hợp nhất, gặp 22/10/2026) không phải đề mục: sau số là chữ thường.
+# "Điều 179 của Luật Thi hành án…" (chú thích văn bản hợp nhất) không phải đề mục: sau số là chữ thường.
 # Dấu chấm sau số Điều có khi hỏng thành một ký tự dính liền số: "Điều 4ể Hàng hóa GIC" (201/2015/TT-BTC, HTML
 # của cổng) — vẫn là đề mục. Phân biệt với câu dẫn chiếu: câu dẫn chiếu có khoảng trắng trước chữ thường.
 ARTICLE_HEADING = re.compile(r"^Điều\s+(\d+[a-zđ]?)(\s*)([.:]?)\s*(.*)$")
@@ -282,7 +282,7 @@ def split_into_articles(lines: list[TextLine], quotes_reliable: bool = True) -> 
     """Các dòng chữ → danh sách Điều; văn bản không có Điều → mục La Mã, mục số, cuối cùng là đoạn theo độ dài.
 
     Một mục duy nhất chưa đủ để coi là cách chia của văn bản ("I." lẻ loi) → thử cách tiếp theo.
-    quotes_reliable=False cho chữ PDF: ngoặc kép hay bị đọc sai, mất cân (đo 22/10/2026: 99/2016/TT-BTC mất 15 Điều).
+    quotes_reliable=False cho chữ PDF: ngoặc kép hay bị đọc sai, mất cân — tin vào chúng thì nuốt mất nhiều Điều.
     """
     for rules in (_ArticleHeadings(), _RomanSectionHeadings(), _NumberedSectionHeadings()):
         articles = _split(lines, rules, quotes_reliable)
@@ -334,8 +334,8 @@ def _split(lines: list[TextLine], rules, quotes_reliable: bool = True) -> list[A
         if line.markup_class == "prov-article":
             open_quotes = 0
         # Sau Điều đầu tiên, ngoặc kép được theo dõi cả khi không có Điều nào đang mở: chú thích cuối của văn bản
-        # hợp nhất (sau khối chữ ký) trích nguyên "“Điều 8. Trách nhiệm thực hiện…”" của văn bản sửa đổi (gặp
-        # 22/10/2026, 27/2026/VBHN-NĐ-BTC). Phần mở đầu thì không — ngoặc gõ sai ở "Căn cứ…" không được nuốt Điều 1.
+        # hợp nhất (sau khối chữ ký) trích nguyên "“Điều 8. Trách nhiệm thực hiện…”" của văn bản sửa đổi.
+        # Phần mở đầu thì không — ngoặc gõ sai ở "Căn cứ…" không được nuốt Điều 1.
         inside_quote = (article is not None or (quotes_reliable and bool(articles))) and open_quotes > 0
         open_quotes = max(0, open_quotes + _quote_balance(text))
 

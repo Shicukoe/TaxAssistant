@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Web app cho mẹ thử trong Wi-Fi nhà: Hỏi + Tra cứu (docs/ui-context.md).
+# Web app trong mạng nội bộ (Wi-Fi nhà): Hỏi đáp + Tra cứu (docs/ui-context.md).
 #
-#   bash scripts/run_model_server.sh     (cửa sổ 1 — model)
-#   bash scripts/run_web_demo.sh         (cửa sổ 2 — web, cổng 8000)
+#   bash scripts/run_model_server.sh       (cửa sổ 1 — model viết, cổng 9931)
+#   bash scripts/run_embedding_server.sh   (cửa sổ 2 — BGE-M3, cổng 9932; tắt thì chỉ tìm theo từ khoá)
+#   bash scripts/run_web_demo.sh           (cửa sổ 3 — web, cổng 8000)
 #
 # Máy khác trong cùng Wi-Fi mở http://<IP laptop>:8000 (script in IP ra). Lần đầu phải mở tường lửa Windows
 # cho cổng 8000, chỉ với mạng Private — chạy MỘT lần trong PowerShell quyền Administrator:
@@ -14,8 +15,6 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && { pwd -W 2>/dev/null || pwd; })"
 cd "$project_root"
 export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
-# Windows không bật symlink → cache HuggingFace vẫn chạy, chỉ tốn chỗ hơn; tắt cảnh báo lặp lại mỗi lần chạy.
-export HF_HUB_DISABLE_SYMLINKS_WARNING=1
 
 if [ -x .venv/bin/python ]; then python=.venv/bin/python; else python=.venv/Scripts/python.exe; fi
 

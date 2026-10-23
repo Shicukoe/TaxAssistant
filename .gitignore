@@ -13,3 +13,4 @@ dagster_home/*
 CLAUDE.md
 # Thư mục tạm Dagster tự tạo khi chạy mà chưa đặt DAGSTER_HOME
 .tmp_dagster_home_*/
+.vscode/

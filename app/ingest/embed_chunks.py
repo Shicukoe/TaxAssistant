@@ -1,7 +1,7 @@
 """Tính vector BGE-M3 cho các đoạn tìm kiếm chưa có vector (docs/architecture.md, Embedding).
 
-Mỗi đoạn được gắn ngữ cảnh văn bản trước khi tính — cách Contextual Retrieval (Anthropic, 19/09/2024: gắn
-50–100 token mô tả vị trí đoạn trong tài liệu làm tìm trượt giảm 35%). Ở đây ngữ cảnh lấy thẳng từ database,
+Mỗi đoạn được gắn ngữ cảnh văn bản trước khi tính — cách Contextual Retrieval (Anthropic, 2024: gắn 50–100 token
+mô tả vị trí đoạn trong tài liệu làm tìm trượt giảm 35%). Ở đây ngữ cảnh lấy thẳng từ database,
 không cần model: "Văn bản hợp nhất 113/VBHN-VPQH — Luật Thuế thu nhập doanh nghiệp…\\nĐiều 10. Thuế suất\\n<chữ>".
 
 Nạp lại văn bản thì chunk đổi id → vector cũ tự xoá (ON DELETE CASCADE) → lần chạy sau tính lại.

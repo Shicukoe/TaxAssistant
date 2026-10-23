@@ -19,6 +19,11 @@ function scrollToEnd(smooth = true) {
   window.scrollTo({ top: document.body.scrollHeight, behavior: smooth ? "smooth" : "auto" });
 }
 
+// Chữ đang chạy ra: chỉ cuộn theo khi người đọc đang ở cuối — đang cuộn lên đọc chỗ khác thì để yên.
+function followIfNearBottom() {
+  if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 200) scrollToEnd(false);
+}
+
 function userMessage(question) {
   const wrap = el("div", null, "message-user");
   wrap.append(el("p", question, "bubble-user"));
@@ -204,6 +209,8 @@ async function ask(question) {
   const steps = [];
   const debug = [];
   let stepsNode = null;
+  let draft = null;
+  let draftText = null;
   const redrawSteps = (seconds, open) => {
     const next = stepsBlock(steps, seconds, debug.join("\n\n"), open);
     if (stepsNode) stepsNode.replaceWith(next); else body.append(next);
@@ -226,14 +233,32 @@ async function ask(question) {
       while ((newline = buffer.indexOf("\n")) >= 0) {
         const message = JSON.parse(buffer.slice(0, newline));
         buffer = buffer.slice(newline + 1);
+        if (message.viet_them !== undefined || message.dang_viet !== undefined) {
+          // kết luận đang viết — luôn ghi rõ chưa kiểm căn cứ; bản đã kiểm thay thế khi xong
+          if (!draft) {
+            draft = el("div", null, "draft");
+            draft.append(el("span", "Đang viết — chưa kiểm căn cứ", "label label-check"));
+            draftText = el("p", "", "conclusion drafting");
+            draft.append(draftText);
+            body.append(draft);
+            status.textContent = "Đang viết câu trả lời…";
+          }
+          draftText.textContent = message.dang_viet !== undefined
+            ? message.dang_viet : draftText.textContent + message.viet_them;
+          followIfNearBottom();
+          continue;
+        }
         if (message.loi) {
           typing.remove();
+          draft?.remove();  // chữ chưa kiểm không được ở lại khi lỗi
           body.append(el("p", message.loi, "callout callout-no-basis"));
           continue;
         }
         if (message.ket_qua) {
           addCurrentThreadToSidebar(question);
           typing.remove();
+          draft?.remove();
+          draft = null;
           if (stepsNode) stepsNode.remove();
           renderResult(body, message.ket_qua);
           for (const step of steps) step.running = false;

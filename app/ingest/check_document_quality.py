@@ -3,8 +3,7 @@
 Không nhận dạng từng kiểu lỗi: kiểm điều mà mọi văn bản đúng đều phải thoả, nên lỗi kiểu mới cũng bị chặn.
   ma_chu         chữ không còn mã TCVN3 / ký tự hỏng                     trượt → cách ly
   thu_tu_de_muc  Điều / mục đánh số liên tục, không có đề mục bị bỏ        trượt → cách ly (văn bản hợp nhất:
-                 cảnh báo — người dùng chốt 23/10/2026: văn bản hợp nhất rất quan trọng; số Điều nhảy thường là
-                 Điều bị bãi bỏ đã bỏ khỏi bản hợp nhất)
+                 cảnh báo — số Điều nhảy thường là Điều bị bãi bỏ đã bỏ khỏi bản hợp nhất)
   do_phu         phần thân văn bản nằm trong Điều / mục                  trượt → cảnh báo
   doan_qua_dai   không đoạn tìm kiếm nào quá dài                          trượt → cảnh báo
 Cách ly: vẫn tìm được, không được trích, nằm trong danh sách chờ xem tay. Đã xem tay và ghi "đúng" vào
@@ -31,8 +30,8 @@ from app.ingest.split_articles import (
 
 QUARANTINE = "cach_ly"
 WARNING = "canh_bao"
-MIN_BODY_COVERAGE = 0.9  # tạm — đặt sau khi xem phân bố (docs/danh-gia.md mục 2)
-MAX_PIECE_CHARS = 20000  # tạm — đoạn dài hơn làm tìm kiếm và ngữ cảnh model kém
+MIN_BODY_COVERAGE = 0.9  # docs/danh-gia.md mục 2
+MAX_PIECE_CHARS = 20000  # đoạn dài hơn làm tìm kiếm và ngữ cảnh model kém
 LEADING_NUMBER = re.compile(r"(\d+)")
 # Dòng trông như đề mục La Mã viết hoa ("III. TỔ CHỨC THỰC HIỆN") — để đếm đề mục không được nhận.
 ROMAN_HEADING_LIKE = re.compile(r"^[IVXL]+\s?[.\-/)]\s*[A-ZĐÀ-Ỹ]{2}")

@@ -24,19 +24,18 @@ answer = [
     "langgraph-checkpoint-postgres==3.2.0",
     "httpx>=0.28,<0.29",
     # guardrail g (kiểm câu kết luận có được căn cứ ủng hộ — cách AlignScore, model NLI chạy CPU).
-    # torch trên PyPI cho Windows là bản CPU.
-    "transformers==5.20.2",
-    "torch==2.14.1",
-    "sentencepiece==0.2.2",
+    # Chạy bản ONNX (scripts/convert_nli_to_onnx.sh chuyển một lần, ở môi trường riêng) — không cần torch, transformers.
+    "onnxruntime==1.31.0",
+    "tokenizers>=0.23,<0.24",
+    "numpy>=2.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "jinja2>=3.1",
 ]
-# bộ đo (giám khảo Claude) — không bao giờ dùng trong app
+# bộ đo ngoại tuyến (giám khảo LLM) — không dùng trong app
 eval = ["anthropic>=0.40"]
 
-# Chỉ app/ là code. Không có dòng này, setuptools thấy thư mục data/ (văn bản tải về)
-# và từ chối cài.
+# Chỉ đóng gói thư mục app/; data/ là dữ liệu tải về, không phải mã nguồn.
 [tool.setuptools.packages.find]
 include = ["app*"]
 

@@ -40,9 +40,9 @@ REFERENCE = re.compile(
     r"\bsố\s+(\d[\w./\-]*)(?:\s+ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4}))?", re.IGNORECASE
 )
 # Dòng "Số: 29 /CP-KTTH" ở phần quốc hiệu. Chỉ nhận "Số:" có dấu hai chấm hoặc "SỐ" viết hoa — chữ "số" thường
-# nằm trong câu "Căn cứ Nghị định số …" (đo 22/10: bắt nhầm hàng trăm văn bản). Chỉ lấy CON SỐ ĐẦU: số hiệu viết
+# nằm trong câu "Căn cứ Nghị định số …" (nhận cả chữ thường sẽ bắt nhầm). Chỉ lấy CON SỐ ĐẦU: số hiệu viết
 # khác dạng giữa đầu văn bản và cổng ("44 - TC/CTN", "39-TC/TCT" so với "39/1997/TT-BTC") là chuyện thường.
-# Phân biệt hoa thường: câu dẫn chiếu viết "quyết định số: 54", "Nghị định số: 89" (đo 22/10, 4 ca báo nhầm).
+# Phân biệt hoa thường: câu dẫn chiếu cũng có dạng "quyết định số: 54", "Nghị định số: 89".
 HEADER_NUMBER = re.compile(r"\bSố\s*:\s*(\d+)")
 # Văn bản cũ không có dòng "Số:" mà viết "QUYẾT ĐỊNH CỦA BỘ TRƯỞNG BỘ TÀI CHÍNH SỐ 1352/1998/…" — chỉ nhận
 # "SỐ" ngay sau loại văn bản ĐẦU TIÊN của tiêu đề; tiêu đề hay nhắc văn bản khác ("… QUY ĐỊNH TẠI NGHỊ ĐỊNH SỐ 19/2015").

@@ -3,7 +3,7 @@
 a. mỗi đoạn trích phải khớp từng chữ với Điều đã lưu — không khớp thì bỏ (quy tắc bất biến số 1);
    chỉ chấp nhận khác nhau về khoảng trắng (xuống dòng, nhiều dấu cách);
 b. trích dẫn phải thuộc một đoạn đã tìm cho câu hỏi này (model chỉ được trỏ số đoạn); ghi nhầm số đoạn mà chữ khớp
-   nguyên văn đúng một đoạn khác trong danh sách → đổi về đoạn đó (gặp khi có 10 đoạn: chép khoản 1 Điều 16, ghi "đoạn 16");
+   nguyên văn đúng một đoạn khác trong danh sách → đổi về đoạn đó (model hay lẫn số đoạn với số Điều khi có nhiều đoạn);
 c. mọi con số trong kết luận phải có trong một đoạn trích đã qua kiểm — không thì gắn cờ; trừ số đã có trong câu hỏi,
    năm của mốc thời gian, số trong số hiệu văn bản được dẫn, số của chỗ dẫn ("khoản 1 Điều 9", "19/VBHN-BTC"), số thứ tự
    đầu dòng (không phải thông tin lấy từ luật);

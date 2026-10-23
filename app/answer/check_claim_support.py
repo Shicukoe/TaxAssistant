@@ -8,7 +8,11 @@ Ngữ cảnh = chữ của KHOẢN chứa mỗi trích dẫn đã qua kiểm (gu
 ai" nằm ở câu dẫn của khoản. Bắt lỗi "suy luận sai": trích đúng nguyên văn nhưng áp cho đối tượng khác.
 Câu dưới ngưỡng chỉ bị gắn cờ, không xoá câu trả lời. Chạy CPU: không tranh VRAM với llama-server.
 
-Giới hạn chạy (23/10/2026): câu trả lời nhiều ý (~20 câu × khoản dài) chạy hơn 10 phút → mỗi câu chỉ chấm với
+Chạy bằng ONNX Runtime + tokenizers — không cần torch, transformers. Model chuyển một lần bằng optimum trong môi
+trường riêng (scripts/convert_nli_to_onnx.sh). Dùng bản float32: điểm trùng bản PyTorch; bản int8 làm lệch điểm
+đủ để đổi kết quả đạt / không đạt (docs/danh-gia.md, guardrail g).
+
+Giới hạn chạy: câu trả lời nhiều ý (~20 câu × khoản dài) cần hàng trăm lượt NLI → mỗi câu chỉ chấm với
 MAX_CHUNKS_PER_CLAIM đoạn có nhiều từ chung nhất (lệch khỏi AlignScore, vốn chấm mọi đoạn) và dừng sau
 TIME_BUDGET_SECONDS; câu chưa kịp chấm không tính vào điểm. Guardrail này không bao giờ làm hỏng câu trả lời.
 
@@ -16,9 +20,13 @@ Chạy bài tự kiểm (không cần model): python -m app.answer.check_claim_s
 """
 
 import asyncio
+import json
 import re
 import time
 from functools import lru_cache
+from pathlib import Path
+
+import numpy as np
 
 import psycopg
 
@@ -26,6 +34,7 @@ from app import config
 from app.answer.search_articles import load_chunk_texts
 
 CHUNK_TOKENS = 350  # theo AlignScore
+MAX_TOKENS = 512  # giới hạn của mDeBERTa
 MAX_CHUNKS_PER_CLAIM = 3
 TIME_BUDGET_SECONDS = 60  # node có timeout 120 giây (answer_graph)
 WORD = re.compile(r"\w+")
@@ -34,17 +43,31 @@ SENTENCE_END = re.compile(r"(?<=[.!?;:])\s+(?=[A-ZĐÀ-Ỹ0-9\"“(-])")
 
 @lru_cache(maxsize=1)
 def load_nli_model():
-    """Nạp một lần cho cả tiến trình (~560 MB, vài giây trên CPU). Import muộn để app khởi động nhanh."""
-    import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    """Nạp một lần cho cả tiến trình (~1 GB, vài giây trên CPU). Import muộn để app khởi động nhanh."""
+    import onnxruntime
+    from tokenizers import Tokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(config.NLI_MODEL)
-    # float32: transformers 5 nạp theo kiểu ghi trong config của model (float16), mà CPU không có phép nhân ma trận
-    # float16 — 512 token mất 7,7 giây thay vì 0,94 giây (đo 23/10/2026, Ryzen 7 5800H)
-    model = AutoModelForSequenceClassification.from_pretrained(config.NLI_MODEL, dtype=torch.float32).eval()
+    folder = Path(config.NLI_ONNX_DIR)
+    tokenizer = Tokenizer.from_file(str(folder / "tokenizer.json"))
+    # Cắt phần đoạn ngữ cảnh, giữ nguyên câu cần chấm — như truncation="only_first" của transformers
+    tokenizer.enable_truncation(max_length=MAX_TOKENS, strategy="only_first")
+    session = onnxruntime.InferenceSession(str(folder / "model.onnx"), providers=["CPUExecutionProvider"])
     # Lấy chỉ số nhãn từ config của model, không đoán thứ tự.
-    labels = {name.lower(): index for index, name in model.config.id2label.items()}
-    return torch, tokenizer, model, labels["entailment"], labels["contradiction"]
+    id2label = json.loads((folder / "config.json").read_text(encoding="utf-8"))["id2label"]
+    labels = {name.lower(): int(index) for index, name in id2label.items()}
+    return tokenizer, session, labels["entailment"], labels["contradiction"]
+
+
+def entailment_probabilities(tokenizer, session, pairs: list[tuple[str, str]]) -> np.ndarray:
+    """Softmax trên ba nhãn cho từng cặp (đoạn, câu), chạy một mẻ — đệm bằng id của token [PAD]."""
+    encodings = tokenizer.encode_batch(pairs)
+    width = max(len(e.ids) for e in encodings)
+    pad = tokenizer.token_to_id("[PAD]")
+    input_ids = np.array([e.ids + [pad] * (width - len(e.ids)) for e in encodings], dtype=np.int64)
+    attention = np.array([e.attention_mask + [0] * (width - len(e.ids)) for e in encodings], dtype=np.int64)
+    logits = session.run(None, {"input_ids": input_ids, "attention_mask": attention})[0]
+    exp = np.exp(logits - logits.max(axis=1, keepdims=True))
+    return exp / exp.sum(axis=1, keepdims=True)
 
 
 def split_sentences(text: str) -> list[str]:
@@ -56,7 +79,7 @@ def split_into_chunks(text: str, tokenizer) -> list[str]:
     """Gộp câu thành đoạn tối đa ~350 token."""
     chunks, current, current_tokens = [], [], 0
     for sentence in split_sentences(text) or [text]:
-        tokens = len(tokenizer(sentence, add_special_tokens=False)["input_ids"])
+        tokens = len(tokenizer.encode(sentence, add_special_tokens=False).ids)
         if current and current_tokens + tokens > CHUNK_TOKENS:
             chunks.append(" ".join(current))
             current, current_tokens = [], 0
@@ -77,23 +100,20 @@ def closest_chunks(claim: str, chunks: list[str]) -> list[str]:
 def score_claims(claims: list[str], context: str) -> list[dict]:
     """Mỗi câu: điểm ủng hộ = max P(entailment) trên các đoạn gần nhất; kèm P(contradiction) của đoạn đó.
     Hết TIME_BUDGET_SECONDS thì dừng — chỉ trả các câu đã chấm."""
-    torch, tokenizer, model, entail_index, contradict_index = load_nli_model()
+    tokenizer, session, entail_index, contradict_index = load_nli_model()
     all_chunks = split_into_chunks(context, tokenizer)
     results, started = [], time.monotonic()
-    with torch.inference_mode():
-        for claim in claims:
-            if time.monotonic() - started > TIME_BUDGET_SECONDS:
-                break
-            chunks = closest_chunks(claim, all_chunks)
-            inputs = tokenizer(chunks, [claim] * len(chunks), truncation="only_first", max_length=512,
-                               padding=True, return_tensors="pt")
-            probabilities = torch.softmax(model(**inputs).logits, dim=-1)
-            best = int(torch.argmax(probabilities[:, entail_index]))
-            results.append({
-                "cau": claim,
-                "diem_ung_ho": round(float(probabilities[best, entail_index]), 3),
-                "diem_mau_thuan": round(float(probabilities[best, contradict_index]), 3),
-            })
+    for claim in claims:
+        if time.monotonic() - started > TIME_BUDGET_SECONDS:
+            break
+        chunks = closest_chunks(claim, all_chunks)
+        probabilities = entailment_probabilities(tokenizer, session, [(chunk, claim) for chunk in chunks])
+        best = int(np.argmax(probabilities[:, entail_index]))
+        results.append({
+            "cau": claim,
+            "diem_ung_ho": round(float(probabilities[best, entail_index]), 3),
+            "diem_mau_thuan": round(float(probabilities[best, contradict_index]), 3),
+        })
     return results
 
 

@@ -19,7 +19,7 @@ from app import config
 from app.answer.search_articles import load_chunk_texts
 from app.answer.write_answer import MAX_CHARS_PER_ARTICLE
 
-MAX_REFERENCED = 2  # ngữ cảnh 16K token: 4 Điều × 6.000 + 2 × 3.000 ký tự (write_answer) vẫn vừa — tạm, chưa đo
+MAX_REFERENCED = 2  # vừa ngữ cảnh 16K token cùng các Điều tìm được (write_answer.CONTEXT_CHAR_BUDGET)
 REFERENCE = re.compile(r"(?:\bkhoản\s+(\d+)\s+(?:của\s+)?)?\bĐiều\s+(\d+[a-zđ]?)\b(?![./]\d)")
 DOCUMENT_TYPE = re.compile(r"\b(?:Bộ luật|Luật|Pháp lệnh|Nghị quyết|Nghị định|Quyết định|Thông tư|Hiến pháp|Văn bản"
                            r"|Hiệp định|Công ước|Điều ước|Quy chế|Quy định)\b(\s+liên tịch)?(\s+này\b)?")

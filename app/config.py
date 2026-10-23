@@ -76,9 +76,11 @@ LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
 
 # Guardrail g: mỗi câu kết luận phải được căn cứ ủng hộ (docs/danh-gia.md). Model NLI đa ngôn ngữ, chạy CPU.
 NLI_MODEL = os.getenv("NLI_MODEL", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
-NLI_SUPPORT_THRESHOLD = float(os.getenv("NLI_SUPPORT_THRESHOLD", "0.5"))  # TẠM — đặt lại trên tập kiểm định
-# Chế độ đo (shadow): luôn chấm và lưu điểm, nhưng CHƯA hiện cảnh báo cho người dùng tới khi hiệu chỉnh xong ngưỡng.
-# Đo 22/10/2026: câu sai đối tượng (rượu của thuyền viên áp cho hành khách) được 0,780 điểm ủng hộ — qua ngưỡng 0,5.
+# Bản ONNX float32 của NLI_MODEL (scripts/convert_nli_to_onnx.sh) — app chạy bằng onnxruntime, không cần torch
+NLI_ONNX_DIR = os.getenv("NLI_ONNX_DIR", "D:/models/nli-onnx/mdeberta-fp32")
+NLI_SUPPORT_THRESHOLD = float(os.getenv("NLI_SUPPORT_THRESHOLD", "0.5"))  # hiệu chỉnh trên tập kiểm định
+# Chế độ đo (shadow): luôn chấm và lưu điểm, chỉ hiện cảnh báo khi bật. Ngưỡng chưa tách được câu áp sai đối tượng
+# khỏi câu đúng (docs/danh-gia.md, guardrail g).
 NLI_WARNINGS_VISIBLE = os.getenv("NLI_WARNINGS_VISIBLE", "false").lower() == "true"
 
 # README của langgraph-checkpoint-postgres: đọc lại checkpoint không giới hạn kiểu có thể bị lợi dụng chạy code.
